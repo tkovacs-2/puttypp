@@ -1,0 +1,15 @@
+#include "rcstuff.h"
+
+#define APPNAME "PuTTY++"
+#define APPDESC "SSH, Telnet, Rlogin, and SUPDUP client"
+
+#include "win_res.rc2"
+#include "tabbar_res.rc2"
+
+#ifdef EMBED_CHM
+ID_CUSTOM_CHMFILE TYPE_CUSTOM_CHMFILE "../putty-0.76/doc/putty.chm"
+#endif
+
+#ifndef NO_MANIFESTS
+1 RT_MANIFEST "..\\putty-0.76\\windows\\putty.mft"
+#endif /* NO_MANIFESTS */
