@@ -2879,7 +2879,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         static WPARAM wp = 0;
         static LPARAM lp = 0;
         if (is_term_hwnd) {
-          break;
+          return 0;
         }
         if (wParam != wp || lParam != lp ||
             last_mousemove != WM_NCMOUSEMOVE) {
@@ -2888,7 +2888,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
           last_mousemove = WM_NCMOUSEMOVE;
         }
         noise_ultralight(NOISE_SOURCE_MOUSEPOS, lParam);
-        break;
+        return 0;
       }
       case WM_IGNORE_CLIP:
         if (!is_term_hwnd) {

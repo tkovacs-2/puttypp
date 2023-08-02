@@ -552,7 +552,7 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
             // Around that we can only catch WM_NCHITTEST.
             LRESULT result = CallWindowProc(_tabBarDefaultProc, hwnd, Message, wParam, lParam);
             if (result == HTTRANSPARENT) {
-                SendMessage(GetParent(_hSelf), WM_NCMOUSEMOVE, (WPARAM)HTTRANSPARENT, lParam);
+                SendMessage(GetParent(_hSelf), WM_NCMOUSEMOVE, (WPARAM)HTCLIENT, lParam);
             }
             return result;
         }
