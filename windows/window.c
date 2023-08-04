@@ -1101,7 +1101,10 @@ static void win_seat_update_specials_menu(Seat *seat)
 {
     WinGuiFrontend *wgf = container_of(seat, WinGuiFrontend, seat);
     HMENU new_menu;
-    int i, j;
+
+    if (wgf->specials_menu) {
+        DestroyMenu(wgf->specials_menu);
+    }
 
     if (wgf->backend)
         wgf->specials = backend_get_specials(wgf->backend);
@@ -1114,6 +1117,7 @@ static void win_seat_update_specials_menu(Seat *seat)
         HMENU saved_menu = NULL;
         int nesting = 1;
         new_menu = CreatePopupMenu();
+        int i;
         for (i = 0; nesting > 0; i++) {
             assert(IDM_SPECIAL_MIN + 0x10 * i < IDM_SPECIAL_MAX);
             switch (wgf->specials[i].code) {
@@ -1146,22 +1150,6 @@ static void win_seat_update_specials_menu(Seat *seat)
     } else {
         new_menu = NULL;
         wgf->n_specials = 0;
-    }
-
-    for (j = 0; j < lenof(popup_menus); j++) {
-        if (wgf->specials_menu) {
-            /* XXX does this free up all submenus? */
-            DeleteMenu(popup_menus[j].menu, (UINT_PTR)wgf->specials_menu,
-                       MF_BYCOMMAND);
-            DeleteMenu(popup_menus[j].menu, IDM_SPECIALSEP, MF_BYCOMMAND);
-        }
-        if (new_menu) {
-            InsertMenu(popup_menus[j].menu, IDM_SHOWLOG,
-                       MF_BYCOMMAND | MF_POPUP | MF_ENABLED,
-                       (UINT_PTR) new_menu, "S&pecial Command");
-            InsertMenu(popup_menus[j].menu, IDM_SHOWLOG,
-                       MF_BYCOMMAND | MF_SEPARATOR, IDM_SPECIALSEP, 0);
-        }
     }
     wgf->specials_menu = new_menu;
 }
@@ -2294,7 +2282,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         handle_wm_notify(lParam);
         break;
       case WM_INITMENU:
-        handle_wm_initmenu(conf);
+        handle_wm_initmenu(wParam);
         break;
       case WM_TIMER:
         if (is_term_hwnd) {

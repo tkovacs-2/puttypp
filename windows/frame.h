@@ -22,4 +22,4 @@ static void add_session(Conf *conf, const char *session_name, int index);
 static void delete_session(WinGuiFrontend *wgf);
 
 static void handle_wm_notify(LPARAM lParam);
-static void handle_wm_initmenu();
+static void handle_wm_initmenu(WPARAM wParam);

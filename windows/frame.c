@@ -447,26 +447,40 @@ static void handle_wm_notify(LPARAM lParam) {
     }
 }
 
-static void handle_wm_initmenu() {
+static void handle_wm_initmenu(WPARAM wParam) {
+    HMENU menu = (HMENU)wParam;
     int resize_action = conf_get_int(wgf_active->conf, CONF_resize_action);
-    for (int i = 0; i < lenof(popup_menus); i++) {
-        EnableMenuItem(popup_menus[i].menu, IDM_FULLSCREEN, MF_BYCOMMAND |
-                       (resize_action == RESIZE_DISABLED ? MF_GRAYED : MF_ENABLED));
+    EnableMenuItem(menu, IDM_FULLSCREEN, MF_BYCOMMAND |
+                   (resize_action == RESIZE_DISABLED ? MF_GRAYED : MF_ENABLED));
+    /*
+     * Destroy the Restart Session menu item. (This will return
+     * failure if it's already absent, as it will be the very first
+     * time we call this function. We ignore that, because as long
+     * as the menu item ends up not being there, we don't care
+     * whether it was us who removed it or not!)
+     */
+    DeleteMenu(menu, IDM_RESTART, MF_BYCOMMAND);
+    if (wgf_active->remote_closed) {
         /*
-         * Destroy the Restart Session menu item. (This will return
-         * failure if it's already absent, as it will be the very first
-         * time we call this function. We ignore that, because as long
-         * as the menu item ends up not being there, we don't care
-         * whether it was us who removed it or not!)
+         * Show the Restart Session menu item. Do a precautionary
+         * delete first to ensure we never end up with more than one.
          */
-        DeleteMenu(popup_menus[i].menu, IDM_RESTART, MF_BYCOMMAND);
-        if (wgf_active->remote_closed) {
-            /*
-             * Show the Restart Session menu item. Do a precautionary
-             * delete first to ensure we never end up with more than one.
-             */
-            InsertMenu(popup_menus[i].menu, IDM_DUPSESS, MF_BYCOMMAND | MF_ENABLED,
-                       IDM_RESTART, "&Restart Session");
+        InsertMenu(menu, IDM_DUPSESS, MF_BYCOMMAND | MF_ENABLED,
+                   IDM_RESTART, "&Restart Session");
+    }
+
+    for (int position = GetMenuItemCount(menu)-1; position >= 0; position--) {
+        if (GetMenuItemID(menu, position) == IDM_SPECIALSEP) {
+            DeleteMenu(menu, position, MF_BYPOSITION);
+            RemoveMenu(menu, position-1, MF_BYPOSITION);
+            break;
         }
+    }
+    if (wgf_active->specials_menu) {
+        InsertMenu(menu, IDM_SHOWLOG,
+                   MF_BYCOMMAND | MF_POPUP | MF_ENABLED,
+                   (UINT_PTR) wgf_active->specials_menu, "S&pecial Command");
+        InsertMenu(menu, IDM_SHOWLOG,
+                   MF_BYCOMMAND | MF_SEPARATOR, IDM_SPECIALSEP, 0);
     }
 }
