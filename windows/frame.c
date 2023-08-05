@@ -82,6 +82,20 @@ static bool create_conf(const char *saved_session, Conf **conf, const char **ses
     return true;
 }
 
+static void term_palette_init_fix_callback(void *ctx)
+{
+    Terminal *term = (Terminal *)ctx;
+    win_palette_set(term->win, 0, 0, term->palette);
+}
+
+static void term_palette_init_fix(Terminal *term)
+{
+    if (!term->win_palette_pending)
+    {
+        queue_toplevel_callback(term_palette_init_fix_callback, term);
+    }
+}
+
 static WinGuiFrontend *create_frontend(Conf *conf, const char *session_name) {
     WinGuiFrontend *wgf = (WinGuiFrontend *)smalloc(sizeof(WinGuiFrontend));
 
@@ -121,7 +135,9 @@ static WinGuiFrontend *create_frontend(Conf *conf, const char *session_name) {
     init_fonts(wgf, 0,0);
     init_palette(wgf);
 
+    wgf->term_palette_init = true;
     Terminal *term = term_init(conf, &wgf->ucsdata, &wgf->wintw);
+    term_palette_init_fix(term);
     wgf->term = term;
     setup_clipboards(term, conf);
     wgf->logctx = log_init(&wgf->logpolicy, conf);
