@@ -386,6 +386,14 @@ static void add_session(Conf *conf, const char *session_name, int index) {
 static void delete_session(WinGuiFrontend *wgf) {
     int deleted_index = wgf->tab_index;
     int index = wgf_active->tab_index;
+    if (pointer_array_size() > 1 && index == deleted_index) {
+        if (index+1 == pointer_array_size()) {
+            index--;
+        } else {
+            index++;
+        }
+        activate_session((WinGuiFrontend *)pointer_array_get(index));
+    }
     tab_bar_remove_tab(deleted_index);
     pointer_array_remove(deleted_index);
     if (pointer_array_size() == 0) {
@@ -395,11 +403,6 @@ static void delete_session(WinGuiFrontend *wgf) {
     if (pointer_array_size() == 0) {
         wgf_active = NULL;
         DestroyWindow(frame_hwnd);
-    } else if (index == deleted_index) {
-        if (index == pointer_array_size()) {
-            index--;
-        }
-        activate_session((WinGuiFrontend *)pointer_array_get(index));
     }
 }
 
