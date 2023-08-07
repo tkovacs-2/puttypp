@@ -13,3 +13,5 @@
 #define IDR_CLOSETAB_INACT    1531
 #define IDR_CLOSETAB_HOVER    1532
 #define IDR_CLOSETAB_PUSH     1533
+
+#define IDR_BLINKTAB          1534

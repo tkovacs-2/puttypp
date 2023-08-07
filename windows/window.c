@@ -530,6 +530,8 @@ static void remote_close_callback(void *context) {
     if (close_on_exit == FORCE_ON ||
         (close_on_exit == AUTO && wgf->remote_exitcode != INT_MAX)) {
         delete_session(wgf);
+    } else {
+        tab_bar_set_tab_unusable(wgf->tab_index, true);
     }
 }
 
@@ -2504,6 +2506,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 lp_eventlog(&wgf->logpolicy, "----- Session restarted -----");
                 term_pwron(term, false);
                 start_backend(wgf);
+                if (wgf->backend) {
+                    tab_bar_set_tab_unusable(wgf->tab_index, false);
+                }
             }
 
             break;
@@ -6033,6 +6038,9 @@ static size_t win_seat_output(Seat *seat, bool is_stderr,
 {
     WinGuiFrontend *wgf = container_of(seat, WinGuiFrontend, seat);
     Terminal *term = wgf->term;
+    if (wgf != wgf_active && len > 0) {
+        tab_bar_set_tab_notified(wgf->tab_index);
+    }
     return term_data(term, is_stderr, data, len);
 }
 

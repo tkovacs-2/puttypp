@@ -1,3 +1,6 @@
+#ifndef TABBAR_H
+#define TABBAR_H
+
 #define TCN_TABDELETE 1
 #define TCN_TABEXCHANGE 2
 
@@ -17,3 +20,8 @@ void tab_bar_remove_tab(int index);
 void tab_bar_select_tab(int index);
 int tab_bar_get_current_tab();
 void tab_bar_set_tab_title(int index, const char *title);
+void tab_bar_set_tab_unusable(int index, bool unusable);
+void tab_bar_set_tab_notified(int index);
+void tab_bar_clear_tab_notified(int index);
+
+#endif

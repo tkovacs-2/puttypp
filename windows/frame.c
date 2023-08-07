@@ -309,6 +309,7 @@ static void realize_palette(WinGuiFrontend *wgf) {
 }
 
 static void activate_session(WinGuiFrontend *wgf) {
+    tab_bar_clear_tab_notified(wgf->tab_index);
     tab_bar_select_tab(wgf->tab_index);
     wgf_active = wgf;
     realize_palette(wgf);
