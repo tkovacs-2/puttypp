@@ -683,7 +683,7 @@ void tab_bar_set_measurement() {
     ImageList_SetIconSize(_hImglst, imageZone.cx, imageZone.cy);
 
     for (int i=IDI_BACKEND_FIRST; i<=IDI_BACKEND_LAST; i++) {
-        HICON hIcon = LoadImage(hinst, MAKEINTRESOURCE(i), IMAGE_ICON, 0, 0, 0);
+        HICON hIcon = LoadImage(hinst, MAKEINTRESOURCE(i), IMAGE_ICON, imageZone.cx, imageZone.cy, 0);
         ImageList_AddIcon(_hImglst, hIcon);
         DestroyIcon(hIcon);
     }
