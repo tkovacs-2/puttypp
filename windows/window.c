@@ -171,6 +171,7 @@ enum MONITOR_DPI_TYPE { MDT_EFFECTIVE_DPI, MDT_ANGULAR_DPI, MDT_RAW_DPI, MDT_DEF
 DECL_WINDOWS_FUNCTION(static, HRESULT, GetDpiForMonitor, (HMONITOR hmonitor, enum MONITOR_DPI_TYPE dpiType, UINT *dpiX, UINT *dpiY));
 DECL_WINDOWS_FUNCTION(static, HRESULT, GetSystemMetricsForDpi, (int nIndex, UINT dpi));
 DECL_WINDOWS_FUNCTION(static, HRESULT, AdjustWindowRectExForDpi, (LPRECT lpRect, DWORD dwStyle, BOOL bMenu, DWORD dwExStyle, UINT dpi));
+DECL_WINDOWS_FUNCTION(static, BOOL, SystemParametersInfoForDpi, (UINT uiAction, UINT uiParam, PVOID pvParam, UINT fWinIni, UINT dpi));
 
 POINT dpi_info;
 static RECT dpi_changed_new_wnd_rect;
@@ -271,7 +272,7 @@ struct WinGuiFrontend {
       int font_height;
     } resize_either;
     bool term_palette_init;
-
+    int font_dpi;
 };
 
 HWND frame_hwnd = NULL;
@@ -533,6 +534,29 @@ static void remote_close_callback(void *context) {
     } else {
         tab_bar_set_tab_unusable(wgf->tab_index, true);
     }
+}
+
+static HFONT get_dpi_aware_tab_bar_font() {
+    if (p_SystemParametersInfoForDpi) {
+        struct {
+            NONCLIENTMETRICSW ncm;
+#if WINVER < 0x0600
+            int iPaddedBorderWidth;
+#endif
+        } buffer;
+        NONCLIENTMETRICSW *ncm = (NONCLIENTMETRICSW *)&buffer;
+        ncm->cbSize = sizeof(buffer);
+        if (p_SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, ncm->cbSize, ncm, 0, dpi_info.y)) {
+            return CreateFontIndirectW(&ncm->lfMenuFont);
+        }
+    } else {
+        NONCLIENTMETRICS ncm;
+        ncm.cbSize = sizeof(NONCLIENTMETRICS);
+        if (SystemParametersInfo(SPI_GETNONCLIENTMETRICS, ncm.cbSize, &ncm, 0)) {
+           return CreateFontIndirect(&ncm.lfMenuFont);
+        }
+    }
+    return NULL;
 }
 
 const unsigned cmdline_tooltype =
@@ -824,7 +848,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
 
         create_tab_bar();
         add_session_tab(conf_get_int(conf, CONF_protocol), session_name, 0);
-        tab_bar_set_measurement();
+        tab_bar_set_measurement(get_dpi_aware_tab_bar_font());
         pointer_array_reset(frontend_set_tab_index);
     }
 
@@ -1657,6 +1681,8 @@ static void init_fonts(WinGuiFrontend *wgf, int pick_width, int pick_height)
     wgf->fontflag[2] = true;
 
     init_ucs(conf, &wgf->ucsdata);
+
+    wgf->font_dpi = dpi_info.y;
 }
 
 static void another_font(WinGuiFrontend *wgf, int fontno)
@@ -1915,6 +1941,8 @@ static void reset_window(WinGuiFrontend *wgf, int reinit) {
             rect.right += p_GetSystemMetricsForDpi(SM_CXVSCROLL,
                                                    dpi_info.x);
         rect.bottom = (wgf->font_height * term->rows);
+        rect.right += tab_bar_get_extra_width();
+        rect.bottom += tab_bar_get_extra_height();
         p_AdjustWindowRectExForDpi(
             &rect, GetWindowLongPtr(frame_hwnd, GWL_STYLE),
             FALSE, GetWindowLongPtr(frame_hwnd, GWL_EXSTYLE),
@@ -3298,6 +3326,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         dpi_info.x = LOWORD(wParam);
         dpi_info.y = HIWORD(wParam);
         dpi_changed_new_wnd_rect = *(RECT*)(lParam);
+        tab_bar_set_measurement(get_dpi_aware_tab_bar_font());
         reset_window(wgf, 3);
         return 0;
       case WM_VSCROLL:
@@ -4348,6 +4377,7 @@ static void init_winfuncs(void)
     GET_WINDOWS_FUNCTION_NO_TYPECHECK(shcore_module, GetDpiForMonitor);
     GET_WINDOWS_FUNCTION_NO_TYPECHECK(user32_module, GetSystemMetricsForDpi);
     GET_WINDOWS_FUNCTION_NO_TYPECHECK(user32_module, AdjustWindowRectExForDpi);
+    GET_WINDOWS_FUNCTION_NO_TYPECHECK(user32_module, SystemParametersInfoForDpi);
 }
 
 /*

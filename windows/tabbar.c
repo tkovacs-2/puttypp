@@ -30,8 +30,8 @@ static COLORREF unusableTextColor = RGB(255, 0, 0);
 static COLORREF notifiedTextColor = RGB(0, 0, 255);
 static SIZE imageZone = { 0, 0 };
 static SIZE notifyBlinkZone = { 0, 0 };
-static int paddingDynamicTwoX = 0;
-static int paddingDynamicTwoY = 0;
+static int imagePaddingX = 0;
+static int closeButtonPaddingX = 0;
 static UINT_PTR notifyBlinkTimer = 0;
 
 static HWND _hSelf = NULL;
@@ -61,7 +61,7 @@ static RECT getItemRect(int tabIndex)
 {
     RECT rect;
     TabCtrl_GetItemRect(_hSelf, tabIndex, &rect);
-    rect.top += paddingDynamicTwoY;
+    rect.top += GetSystemMetrics(SM_CYEDGE);
     return rect;
 }
 
@@ -70,7 +70,7 @@ static POINT getImagePointFrom(const RECT *tabRect)
     POINT point;
     LONG fromBorder = (tabRect->bottom - tabRect->top - imageZone.cy + 1) / 2;
     point.y = tabRect->top + fromBorder;
-    point.x = tabRect->left + fromBorder;
+    point.x = tabRect->left + imagePaddingX;
     return point;
 }
 
@@ -110,7 +110,7 @@ static RECT CloseButtonZone_getButtonRectFrom(const RECT *tabRect)
 
     int fromBorder;
     fromBorder = (tabRect->bottom - tabRect->top - _closeButtonZone.cy + 1) / 2;
-    buttonRect.left = tabRect->right - fromBorder - _closeButtonZone.cx;
+    buttonRect.left = tabRect->right - closeButtonPaddingX - _closeButtonZone.cx;
     buttonRect.top = tabRect->top + fromBorder;
     buttonRect.bottom = buttonRect.top + _closeButtonZone.cy;
     buttonRect.right = buttonRect.left + _closeButtonZone.cx;
@@ -189,32 +189,33 @@ static void TabBarPlus_drawItem(DRAWITEMSTRUCT *pDrawItemStruct)
     SetBkMode(hDC, TRANSPARENT);
     HBRUSH hBrush;
 
+    int cxEdge = GetSystemMetrics(SM_CXEDGE);
+    int cyEdge = GetSystemMetrics(SM_CYEDGE);
     // equalize drawing areas of active and inactive tabs
     if (isSelected)
     {
         // the drawing area of the active tab extends on all borders by default
-        rect.top += GetSystemMetrics(SM_CYEDGE);
-        rect.bottom -= GetSystemMetrics(SM_CYEDGE);
-        rect.left += GetSystemMetrics(SM_CXEDGE);
-        rect.right -= GetSystemMetrics(SM_CXEDGE);
+        rect.top += cyEdge;
+        rect.bottom -= cyEdge;
+        rect.left += cxEdge;
+        rect.right -= cxEdge;
         // the active tab is also slightly higher by default (use this to shift the tab cotent up bx two pixels if tobBar is not drawn)
-        rect.top += paddingDynamicTwoY;
+        rect.top += cyEdge;
     }
     else
     {
-        rect.left -= paddingDynamicTwoX;
-        rect.right += paddingDynamicTwoX;
-        rect.top += paddingDynamicTwoY;
-        rect.bottom += paddingDynamicTwoY;
+        rect.left -= cxEdge;
+        rect.right += cxEdge;
+        rect.top += cyEdge;
+        rect.bottom += cyEdge;
     }
 
     // draw highlights on tabs (top bar for active tab / darkened background for inactive tab)
     if (isSelected)
     {
         RECT r = rect;
-        int topBarHeight = DPIManager_scaleX(4);
-        r.top -= paddingDynamicTwoY;
-        r.bottom = r.top + topBarHeight;
+        r.bottom = r.top + DPIManager_scaleX(2);
+        r.top -= cyEdge;
 
         hBrush = CreateSolidBrush(_activeTopBarFocusedColour); // #FAAA3C
         FillRect(hDC, &r, hBrush);
@@ -286,7 +287,7 @@ static void TabBarPlus_drawItem(DRAWITEMSTRUCT *pDrawItemStruct)
 
     TEXTMETRIC textMetrics;
     GetTextMetrics(hDC, &textMetrics);
-    int textDescent = textMetrics.tmDescent;
+    int textDescent = textMetrics.tmDescent / DPIManager_scaleX(2);;
 
     int Flags = DT_SINGLELINE | DT_NOPREFIX;
 
@@ -295,8 +296,8 @@ static void TabBarPlus_drawItem(DRAWITEMSTRUCT *pDrawItemStruct)
     Flags |= DT_VCENTER;
 
     // ignoring the descent when centering (text elements below the base line) is more pleasing to the eye
-    rect.top += textDescent / 2;
-    rect.bottom += textDescent / 2;
+    rect.top += textDescent;
+    rect.bottom += textDescent;
 
     // 1 space distance to save icon
     rect.left = imagePos.x + imageZone.cx;
@@ -667,17 +668,24 @@ void destroy_tab_bar() {
     DestroyWindow(_hSelf);
 }
 
-void tab_bar_set_measurement() {
+void tab_bar_set_measurement(HFONT dpiAwareFont) {
     imageZone.cx = DPIManager_scaleX(16);
     imageZone.cy = DPIManager_scaleY(13);
     notifyBlinkZone.cx = DPIManager_scaleX(8);
     notifyBlinkZone.cy = DPIManager_scaleY(8);
     _closeButtonZone.cx = DPIManager_scaleX(11);
     _closeButtonZone.cy = DPIManager_scaleY(11);
-    paddingDynamicTwoX = DPIManager_scaleX(2);
-    paddingDynamicTwoY = DPIManager_scaleY(2);
+    imagePaddingX = DPIManager_scaleX(4);
+    closeButtonPaddingX = DPIManager_scaleX(5);
 
-    _hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+    if (_hFont) {
+        DeleteObject(_hFont);
+    }
+    if (dpiAwareFont) {
+        _hFont = dpiAwareFont;
+    } else {
+        _hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+    }
     SendMessage(_hSelf, WM_SETFONT, (WPARAM)_hFont, (LPARAM)FALSE);
 
     ImageList_SetIconSize(_hImglst, imageZone.cx, imageZone.cy);
@@ -687,7 +695,7 @@ void tab_bar_set_measurement() {
         ImageList_AddIcon(_hImglst, hIcon);
         DestroyIcon(hIcon);
     }
-    SendMessage(_hSelf, TCM_SETPADDING, 0, MAKELPARAM(DPIManager_scaleX(9), 5));
+    SendMessage(_hSelf, TCM_SETPADDING, 0, MAKELPARAM(DPIManager_scaleX(15), DPIManager_scaleY(5)));
     SendMessage(_hSelf, TCM_SETIMAGELIST, 0, (LPARAM)_hImglst);
 
     RECT r = {0, 0, 0, 0};

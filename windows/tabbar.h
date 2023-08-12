@@ -11,7 +11,7 @@ struct TBHDR {
 
 void create_tab_bar();
 void destroy_tab_bar();
-void tab_bar_set_measurement();
+void tab_bar_set_measurement(HFONT dpiAwareFont);
 int tab_bar_get_extra_width();
 int tab_bar_get_extra_height();
 void tab_bar_adjust_window();

@@ -315,6 +315,11 @@ static void activate_session(WinGuiFrontend *wgf) {
     realize_palette(wgf);
     int resize_action = conf_get_int(wgf->conf, CONF_resize_action);
     bool was_zoomed = wgf->resize_either.was_zoomed;
+    if (wgf->font_dpi != dpi_info.y) {
+        deinit_fonts(wgf);
+        init_fonts(wgf, 0, 0);
+    }
+
     if (IsZoomed(frame_hwnd)) {
         if (!was_zoomed) {
             wgf->resize_either.was_zoomed = true;
