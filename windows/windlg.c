@@ -16,6 +16,7 @@
 #include "storage.h"
 #include "dialog.h"
 #include "licence.h"
+#include "version_puttypp.h"
 
 #include <commctrl.h>
 #include <commdlg.h>
@@ -215,8 +216,8 @@ static INT_PTR CALLBACK AboutProc(HWND hwnd, UINT msg,
         sfree(str);
         char *buildinfo_text = buildinfo("\r\n");
         char *text = dupprintf(
-            "%s 0.1\r\n\r\n"
-            "Copyright (c) 2023 Tamas Kovacs (kovirw@gmail.com)\r\n\r\n"
+            "%s "PUTTYPP_VERSION"\r\n\r\n"
+            PUTTYPP_COPYRIGHT"\r\n\r\n"
             "Based on PuTTY %s source by Simon Tatham.\r\n"
             "Custom tab control basics are from Notepad++ by Don Ho.\r\n\r\n"
             "PuTTY build info:\r\n"

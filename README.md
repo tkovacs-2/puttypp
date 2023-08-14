@@ -5,10 +5,10 @@ Current features:
 - Multiple terminal sessions in single frame window.
   No background Putty processes, no window embedding.
   Everything is handled by single process.
+- Sign incoming data for not visible terminal sessions.
 
 Planned features:
 - Update to latest Putty source.
-- Sign incoming data for not visible terminal sessions.
 - Prevent accidental paste of big clipboard data.
 - Find in terminal buffer.
 - Syntax highlight.

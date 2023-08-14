@@ -322,7 +322,7 @@ proxy.o: ../putty-0.76/proxy.c ../putty-0.76/putty.h ../putty-0.76/network.h ../
 putty.res.o: ../windows/putty.rc ../putty-0.76/windows/rcstuff.h \
 		../windows/win_res.rc2 ../putty-0.76/windows/putty.mft \
 		../putty-0.76/windows/win_res.h ../putty-0.76/windows/putty.ico \
-		../putty-0.76/windows/puttycfg.ico ../windows/version.rc2 ../putty-0.76/version.h \
+		../putty-0.76/windows/puttycfg.ico ../windows/version.rc2 ../putty-0.76/version.h ../windows/version_puttypp.h \
 		../putty-0.76/licence.h ../windows/tabbar_res.rc2 ../windows/tabbar_res.h
 	$(RC) $(RCFL) $(RCFLAGS) ../windows/putty.rc -o putty.res.o
 
@@ -715,7 +715,7 @@ windlg.o: ../windows/windlg.c ../putty-0.76/putty.h ../putty-0.76/ssh.h ../putty
 		../putty-0.76/defs.h ../putty-0.76/puttyps.h ../putty-0.76/network.h ../putty-0.76/misc.h ../putty-0.76/marshal.h \
 		../putty-0.76/sshsignals.h ../putty-0.76/puttymem.h ../putty-0.76/tree234.h ../putty-0.76/sshttymodes.h \
 		../windows/winstuff.h ../putty-0.76/unix/unix.h ../putty-0.76/windows/winhelp.h \
-		../putty-0.76/charset/charset.h
+		../putty-0.76/charset/charset.h  ../windows/version_puttypp.h
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -c ../windows/windlg.c
 
 window.o: ../windows/window.c ../putty-0.76/putty.h ../putty-0.76/terminal.h ../putty-0.76/storage.h \

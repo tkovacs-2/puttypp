@@ -11,6 +11,7 @@
 
 #include "version.h"
 #include "licence.h"
+#include "version_puttypp.h"
 
 /*
  * The actual VERSIONINFO resource.
@@ -46,12 +47,12 @@ BEGIN
 	    VALUE "FileDescription",	APPDESC
 	    VALUE "InternalName",	APPNAME
 	    VALUE "OriginalFilename",	APPNAME
-	    VALUE "FileVersion",	"0.1"
-	    VALUE "ProductVersion",	"0.1"
-	    VALUE "LegalCopyright",	"Copyright (c) 2023 Tamas Kovacs (kovirw@gmail.com)"
+	    VALUE "FileVersion",	PUTTYPP_VERSION
+	    VALUE "ProductVersion",	PUTTYPP_VERSION
+	    VALUE "LegalCopyright",	PUTTYPP_COPYRIGHT
 #if (!defined SNAPSHOT) && (!defined RELEASE) && (!defined PRERELEASE)
 	    /* Only if VS_FF_PRIVATEBUILD. */
-	    VALUE "PrivateBuild",	"0.1" /* NBI */
+	    VALUE "PrivateBuild",	PUTTYPP_VERSION /* NBI */
 #endif
 	END
     END
