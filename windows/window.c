@@ -257,6 +257,7 @@ struct WinGuiFrontend {
     int session_id;
     const char *session_name;
     bool remote_closed;
+    bool delete_session;
     int remote_exitcode;
     int tab_index;
     struct {
@@ -529,7 +530,8 @@ static void remote_close_callback(void *context) {
     stop_backend(wgf);
     int close_on_exit = conf_get_int(wgf->conf, CONF_close_on_exit);
     if (close_on_exit == FORCE_ON ||
-        (close_on_exit == AUTO && wgf->remote_exitcode != INT_MAX)) {
+        (close_on_exit == AUTO && wgf->remote_exitcode != INT_MAX) ||
+        wgf->delete_session) {
         delete_session(wgf);
     } else {
         tab_bar_set_tab_unusable(wgf->tab_index, true);
@@ -1243,18 +1245,25 @@ static void win_seat_connection_fatal(Seat *seat, const char *msg)
 {
     WinGuiFrontend *wgf = container_of(seat, WinGuiFrontend, seat);
 
-    if (!wgf->remote_closed) {
-        if (wgf == wgf_active) {
-            char *title = dupprintf("%s Fatal Error", appname);
-            show_mouseptr(wgf, true);
+    if (wgf == wgf_active) {
+        int close_on_exit = conf_get_int(wgf->conf, CONF_close_on_exit);
+        char *title = dupprintf("%s Fatal Error", appname);
+        show_mouseptr(wgf, true);
+        if (close_on_exit == AUTO || close_on_exit == FORCE_OFF) {
+            char *question = dupprintf("%s\nDo you want to close the session?", msg);
+            if (MessageBox(frame_hwnd, question, title, MB_ICONERROR | MB_YESNO) == IDYES) {
+                wgf->delete_session = true;
+            }
+            sfree(question);
+        } else {
             MessageBox(frame_hwnd, msg, title, MB_ICONERROR | MB_OK);
-            sfree(title);
         }
-
-        queue_toplevel_callback(remote_close_callback, wgf);
-        wgf->remote_closed = true;
-        wgf->remote_exitcode = INT_MAX;
+        sfree(title);
     }
+
+    queue_toplevel_callback(remote_close_callback, wgf);
+    wgf->remote_closed = true;
+    wgf->remote_exitcode = INT_MAX;
 }
 
 /*
@@ -2192,8 +2201,15 @@ static void win_seat_notify_remote_exit(Seat *seat)
              * we should not generate this informational one. */
             if (exitcode != INT_MAX && wgf == wgf_active) {
                 show_mouseptr(wgf, true);
-                MessageBox(frame_hwnd, "Connection closed by remote host",
-                           appname, MB_OK | MB_ICONINFORMATION);
+                if (close_on_exit == FORCE_OFF) {
+                    if (MessageBox(frame_hwnd, "Connection closed by remote host\nDo you want to close the session?",
+                           appname, MB_YESNO | MB_ICONINFORMATION) == IDYES) {
+                        wgf->delete_session = true;
+                    }
+                } else {
+                    MessageBox(frame_hwnd, "Connection closed by remote host",
+                               appname, MB_OK | MB_ICONINFORMATION);
+                }
             }
         }
     }

@@ -156,6 +156,7 @@ static WinGuiFrontend *create_frontend(Conf *conf, const char *session_name) {
     wgf->session_id = session_counter++;
     wgf->session_name = session_name;
     wgf->remote_closed = true;
+    wgf->delete_session = false;
 
     wgf->si.total = wgf->term->rows;
     wgf->si.page = wgf->term->rows;
