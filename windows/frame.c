@@ -198,6 +198,32 @@ static void set_icon_title_from_session(WinGuiFrontend *wgf) {
         SetWindowText(frame_hwnd, wgf->icon_name);
 }
 
+/* Calling of wintw_set_scrollbar() is connected to drawing in term_update() in terminal.c
+   This means if scroll info has changed till session is not active the new status is
+   is not updated in the WinGuiFrontend.
+   To workaround this the original handling is copied into below function and called
+   at activation to trigger the call for wintw_set_scrollbar. */
+static bool update_sbar(Terminal *term) {
+    bool need_sbar_update = term->seen_disp_event ||
+        term->win_scrollbar_update_pending;
+    term->win_scrollbar_update_pending = false;
+    if (term->seen_disp_event && term->scroll_on_disp) {
+        term->disptop = 0;         /* return to main screen */
+        term->seen_disp_event = false;
+        need_sbar_update = true;
+    }
+    if (need_sbar_update) {
+        int sblines = count234(term->scrollback);
+        if (term->erase_to_scrollback &&
+            term->alt_which && term->alt_screen) {
+                sblines += term->alt_sblines;
+        }
+        wintw_set_scrollbar(term->win, sblines + term->rows,
+                            sblines + term->disptop, term->rows);
+    }
+    return need_sbar_update;
+}
+
 static void set_scrollbar_from_session(WinGuiFrontend *wgf, bool redraw) {
     if (!conf_get_bool(wgf->conf, is_full_screen() ?
                        CONF_scrollbar_in_fullscreen : CONF_scrollbar))
@@ -364,7 +390,9 @@ static void activate_session(WinGuiFrontend *wgf) {
     set_frame_style(wgf->conf);
     set_title_from_session(wgf);
     set_icon_title_from_session(wgf);
-    set_scrollbar_from_session(wgf, true);
+    if (!update_sbar(wgf->term)) {
+        set_scrollbar_from_session(wgf, true);
+    }
     update_mouse_pointer(wgf);
     reseteventlog(&wgf->eventlogstuff);
 }
