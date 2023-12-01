@@ -57,6 +57,7 @@
 #define IDM_FULLSCREEN  0x0180
 #define IDM_COPY      0x0190
 #define IDM_PASTE     0x01A0
+#define IDM_CONFIRM_PASTE 0x01B0
 #define IDM_SPECIALSEP 0x0200
 
 #define IDM_SPECIAL_MIN 0x0400
@@ -118,7 +119,8 @@ static bool is_full_screen(void);
 static void make_full_screen(void);
 static void clear_full_screen(void);
 static void flip_full_screen(void);
-static void process_clipdata(Terminal *term, HGLOBAL clipdata, bool unicode);
+static void process_clipdata(HWND hwnd, HGLOBAL clipdata, bool unicode);
+static void paste_clipdata(Terminal *term, WPARAM wParam, LPARAM lParam);
 static void setup_clipboards(Terminal *, Conf *);
 
 /* Window layout information */
@@ -278,10 +280,12 @@ struct WinGuiFrontend {
 
 HWND frame_hwnd = NULL;
 static HWND term_hwnd = NULL;
+static bool confirm_paste = true;
 
 #include "frame.h"
 #include "tabbar.h"
 #include "pointerarray.h"
+#include "pastedlg.h"
 
 static bool wintw_setup_draw_ctx(TermWin *);
 static void wintw_draw_text(TermWin *, int x, int y, wchar_t *text, int len,
@@ -559,6 +563,13 @@ static HFONT get_dpi_aware_tab_bar_font() {
         }
     }
     return NULL;
+}
+
+static void check_menu_item(UINT item, UINT check)
+{
+    int i;
+    for (i = 0; i < lenof(popup_menus); i++)
+        CheckMenuItem(popup_menus[i].menu, item, check);
 }
 
 const unsigned cmdline_tooltype =
@@ -929,6 +940,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
             AppendMenu(m, MF_SEPARATOR, 0, 0);
             AppendMenu(m, MF_ENABLED, IDM_FULLSCREEN, "&Full Screen");
             AppendMenu(m, MF_ENABLED, IDM_SHOWLOG, "&Event Log");
+            AppendMenu(m, MF_ENABLED | (confirm_paste ? MF_CHECKED : MF_UNCHECKED), IDM_CONFIRM_PASTE, "Confirm Paste");
             AppendMenu(m, MF_SEPARATOR, 0, 0);
             if (has_help())
                 AppendMenu(m, MF_ENABLED, IDM_HELP, "&Help");
@@ -2454,6 +2466,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
           case IDM_SHOWLOG:
             showeventlog(hwnd, &wgf->eventlogstuff);
             break;
+          case IDM_CONFIRM_PASTE:
+            confirm_paste = !confirm_paste;
+            check_menu_item(IDM_CONFIRM_PASTE, (confirm_paste ? MF_CHECKED : MF_UNCHECKED));
+            break;
           case IDM_NEWSESS: {
             Conf *conf = NULL;
             const char *session_name = NULL;
@@ -3642,7 +3658,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         if (!is_term_hwnd) {
           return 0;
         }
-        process_clipdata(term, (HGLOBAL)lParam, wParam);
+        paste_clipdata(term, wParam, lParam);
         return 0;
       default:
         if (message == wm_mousewheel || message == WM_MOUSEWHEEL) {
@@ -5617,11 +5633,9 @@ static DWORD WINAPI clipboard_read_threadfunc(void *param)
 
     if (OpenClipboard(NULL)) {
         if ((clipdata = GetClipboardData(CF_UNICODETEXT))) {
-            SendMessage(hwnd, WM_GOT_CLIPDATA,
-                        (WPARAM)true, (LPARAM)clipdata);
+            process_clipdata(hwnd, clipdata, true);
         } else if ((clipdata = GetClipboardData(CF_TEXT))) {
-            SendMessage(hwnd, WM_GOT_CLIPDATA,
-                        (WPARAM)false, (LPARAM)clipdata);
+            process_clipdata(hwnd, clipdata, false);
         }
         CloseClipboard();
     }
@@ -5629,7 +5643,7 @@ static DWORD WINAPI clipboard_read_threadfunc(void *param)
     return 0;
 }
 
-static void process_clipdata(Terminal *term, HGLOBAL clipdata, bool unicode)
+static void process_clipdata(HWND hwnd, HGLOBAL clipdata, bool unicode)
 {
     wchar_t *clipboard_contents = NULL;
     size_t clipboard_length = 0;
@@ -5645,7 +5659,6 @@ static void process_clipdata(Terminal *term, HGLOBAL clipdata, bool unicode)
             clipboard_contents = snewn(clipboard_length + 1, wchar_t);
             memcpy(clipboard_contents, p, clipboard_length * sizeof(wchar_t));
             clipboard_contents[clipboard_length] = L'\0';
-            term_do_paste(term, clipboard_contents, clipboard_length);
         }
     } else {
         char *s = GlobalLock(clipdata);
@@ -5658,10 +5671,28 @@ static void process_clipdata(Terminal *term, HGLOBAL clipdata, bool unicode)
                                 clipboard_contents, i);
             clipboard_length = i - 1;
             clipboard_contents[clipboard_length] = L'\0';
-            term_do_paste(term, clipboard_contents, clipboard_length);
         }
     }
+    GlobalUnlock(clipdata);
+    if (clipboard_contents) {
+        PostMessage(hwnd, WM_GOT_CLIPDATA,
+                    (WPARAM)clipboard_length, (LPARAM)clipboard_contents);
+    }
+}
 
+static void paste_clipdata(Terminal *term, WPARAM wParam, LPARAM lParam)
+{
+    wchar_t *clipboard_contents = (wchar_t *)lParam;
+    size_t clipboard_length = (size_t)wParam;
+
+    if (confirm_paste && wcschr(clipboard_contents, L'\r')) {
+        RECT ss;
+        get_fullscreen_rect(&ss);
+        if (!show_paste_confirm(&ss, &clipboard_contents, &clipboard_length)) {
+            return;
+        }
+    }
+    term_do_paste(term, clipboard_contents, clipboard_length);
     sfree(clipboard_contents);
 }
 
@@ -6024,11 +6055,7 @@ static void make_full_screen()
     reset_window(wgf_active, 0);
 
     /* Tick the menu item in the System and context menus. */
-    {
-        int i;
-        for (i = 0; i < lenof(popup_menus); i++)
-            CheckMenuItem(popup_menus[i].menu, IDM_FULLSCREEN, MF_CHECKED);
-    }
+    check_menu_item(IDM_FULLSCREEN, MF_CHECKED);
 }
 
 /*
@@ -6058,11 +6085,7 @@ static void clear_full_screen()
     }
 
     /* Untick the menu item in the System and context menus. */
-    {
-        int i;
-        for (i = 0; i < lenof(popup_menus); i++)
-            CheckMenuItem(popup_menus[i].menu, IDM_FULLSCREEN, MF_UNCHECKED);
-    }
+    check_menu_item(IDM_FULLSCREEN, MF_UNCHECKED);
 }
 
 /*

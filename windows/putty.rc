@@ -5,6 +5,7 @@
 
 #include "win_res.rc2"
 #include "tabbar_res.rc2"
+#include "pastedlg_res.rc2"
 
 #ifdef EMBED_CHM
 ID_CUSTOM_CHMFILE TYPE_CUSTOM_CHMFILE "../putty-0.76/doc/putty.chm"

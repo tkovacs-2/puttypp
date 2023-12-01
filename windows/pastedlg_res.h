@@ -1,0 +1,3 @@
+
+#define IDD_PASTE_CONFIRM 120
+#define IDC_TEXT 1001

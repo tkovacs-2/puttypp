@@ -138,7 +138,7 @@ putty++.exe: agentf.o aqsync.o be_all_s.o be_misc.o callback.o cmdline.o \
 		winnps.o winpgntc.o winprint.o winproxy.o winsecur.o \
 		winselgui.o winser.o winshare.o winstore.o wintime.o \
 		winucs.o winutils.o winx11.o x11fwd.o \
-		tabbar.o pointerarray.o
+		tabbar.o pointerarray.o pastedlg.o
 	$(CC) -mwindows $(LDFLAGS) -o $@ -Wl,-Map,putty.map agentf.o \
 		aqsync.o be_all_s.o be_misc.o callback.o cmdline.o conf.o \
 		config.o cproxy.o dialog.o ecc.o errsock.o ldisc.o logging.o \
@@ -162,7 +162,7 @@ putty++.exe: agentf.o aqsync.o be_all_s.o be_misc.o callback.o cmdline.o \
 		winnps.o winpgntc.o winprint.o winproxy.o winsecur.o \
 		winselgui.o winser.o winshare.o winstore.o wintime.o \
 		winucs.o winutils.o winx11.o x11fwd.o \
-		tabbar.o pointerarray.o \
+		tabbar.o pointerarray.o pastedlg.o\
 		-ladvapi32 -lcomdlg32 \
 		-lgdi32 -limm32 -lole32 -lshell32 -luser32 -lcomctl32
 
@@ -323,7 +323,7 @@ putty.res.o: ../windows/putty.rc ../putty-0.76/windows/rcstuff.h \
 		../windows/win_res.rc2 ../putty-0.76/windows/putty.mft \
 		../putty-0.76/windows/win_res.h ../putty-0.76/windows/putty.ico \
 		../putty-0.76/windows/puttycfg.ico ../windows/version.rc2 ../putty-0.76/version.h ../windows/version_puttypp.h \
-		../putty-0.76/licence.h ../windows/tabbar_res.rc2 ../windows/tabbar_res.h
+		../putty-0.76/licence.h ../windows/tabbar_res.rc2 ../windows/tabbar_res.h ../windows/pastedlg_res.rc2 ../windows/pastedlg_res.h
 	$(RC) $(RCFL) $(RCFLAGS) ../windows/putty.rc -o putty.res.o
 
 raw.o: ../putty-0.76/raw.c ../putty-0.76/putty.h ../putty-0.76/defs.h ../putty-0.76/puttyps.h ../putty-0.76/network.h ../putty-0.76/misc.h \
@@ -900,6 +900,9 @@ tabbar.o: ../windows/tabbar.c ../windows/tabbar.h ../windows/tabbar_res.h
 
 pointerarray.o: ../windows/pointerarray.c ../windows/pointerarray.h
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -c ../windows/pointerarray.c
+
+pastedlg.o: ../windows/pastedlg.c ../windows/pastedlg.h ../windows/pastedlg_res.h
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -c ../windows/pastedlg.c
 
 clean:
 	rm -f *.o *.exe *.res.o *.so *.map
