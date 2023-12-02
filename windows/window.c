@@ -527,19 +527,50 @@ static void frontend_set_tab_index(void *p, int index) {
     wgf->tab_index = index;
 }
 
+static bool is_session_deletable(WinGuiFrontend *wgf) {
+    int close_on_exit = conf_get_int(wgf->conf, CONF_close_on_exit);
+    return (close_on_exit == FORCE_ON ||
+            (close_on_exit == AUTO && wgf->remote_exitcode != INT_MAX) ||
+            wgf->delete_session);
+}
+
 static void remote_close_callback(void *context) {
     WinGuiFrontend *wgf = (WinGuiFrontend *)context;
     assert(wgf->remote_closed);
 
     stop_backend(wgf);
-    int close_on_exit = conf_get_int(wgf->conf, CONF_close_on_exit);
-    if (close_on_exit == FORCE_ON ||
-        (close_on_exit == AUTO && wgf->remote_exitcode != INT_MAX) ||
-        wgf->delete_session) {
+    if (is_session_deletable(wgf)) {
         delete_session(wgf);
-    } else {
-        tab_bar_set_tab_unusable(wgf->tab_index, true);
     }
+}
+
+static void remote_close(WinGuiFrontend *wgf, int exitcode, const char *msg) {
+    queue_toplevel_callback(remote_close_callback, wgf);
+    wgf->remote_closed = true;
+    wgf->remote_exitcode = exitcode;
+
+    if (is_session_deletable(wgf)) {
+        return;
+    }
+    tab_bar_set_tab_unusable(wgf->tab_index, true);
+
+    term_data(wgf->term, true, "\r\n", 2);
+    term_set_trust_status(wgf->term, true);
+    term_data(wgf->term, true, "\033[31m", 5);
+    const char *p0 = msg;
+    const char *p = msg;
+    while (*p) {
+        if (*p == '\n' && p[1] != 0 && p != msg && p[-1] != '\r') {
+            term_data(wgf->term, true, p0, p-p0);
+            term_data(wgf->term, true, "\r\n", 2);
+            p++;
+            p0 = p;
+        }
+        p++;
+    }
+    term_data(wgf->term, true, p0, p-p0);
+    term_data(wgf->term, true, "\033[0m", 4);
+    term_set_trust_status(wgf->term, false);
 }
 
 static HFONT get_dpi_aware_tab_bar_font() {
@@ -1262,7 +1293,7 @@ static void win_seat_connection_fatal(Seat *seat, const char *msg)
         char *title = dupprintf("%s Fatal Error", appname);
         show_mouseptr(wgf, true);
         if (close_on_exit == AUTO || close_on_exit == FORCE_OFF) {
-            char *question = dupprintf("%s\nDo you want to close the session?", msg);
+            char *question = dupprintf("%s\nDo you want to close the session tab?", msg);
             if (MessageBox(frame_hwnd, question, title, MB_ICONERROR | MB_YESNO) == IDYES) {
                 wgf->delete_session = true;
             }
@@ -1272,10 +1303,7 @@ static void win_seat_connection_fatal(Seat *seat, const char *msg)
         }
         sfree(title);
     }
-
-    queue_toplevel_callback(remote_close_callback, wgf);
-    wgf->remote_closed = true;
-    wgf->remote_exitcode = INT_MAX;
+    remote_close(wgf, INT_MAX, msg);
 }
 
 /*
@@ -2201,10 +2229,6 @@ static void win_seat_notify_remote_exit(Seat *seat)
         /* Abnormal exits will already have set session_closed and taken
          * appropriate action. */
 
-        queue_toplevel_callback(remote_close_callback, wgf);
-        wgf->remote_closed = true;
-        wgf->remote_exitcode = exitcode;
-
         if (close_on_exit == FORCE_ON ||
             (close_on_exit == AUTO && exitcode != INT_MAX)) {
         } else {
@@ -2213,17 +2237,13 @@ static void win_seat_notify_remote_exit(Seat *seat)
              * we should not generate this informational one. */
             if (exitcode != INT_MAX && wgf == wgf_active) {
                 show_mouseptr(wgf, true);
-                if (close_on_exit == FORCE_OFF) {
-                    if (MessageBox(frame_hwnd, "Connection closed by remote host\nDo you want to close the session?",
-                           appname, MB_YESNO | MB_ICONINFORMATION) == IDYES) {
-                        wgf->delete_session = true;
-                    }
-                } else {
-                    MessageBox(frame_hwnd, "Connection closed by remote host",
-                               appname, MB_OK | MB_ICONINFORMATION);
+                if (MessageBox(frame_hwnd, "Connection closed by remote host\nDo you want to close the session tab?",
+                       appname, MB_YESNO | MB_ICONINFORMATION) == IDYES) {
+                    wgf->delete_session = true;
                 }
             }
         }
+        remote_close(wgf, exitcode, "Connection closed by remote host");
     }
 }
 
