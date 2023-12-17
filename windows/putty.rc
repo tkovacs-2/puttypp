@@ -1,16 +1,17 @@
 #include "rcstuff.h"
+#include "putty-rc.h"
 
 #define APPNAME "PuTTY++"
 #define APPDESC "SSH, Telnet, Rlogin, and SUPDUP client"
 
-#include "win_res.rc2"
+IDI_MAINICON ICON "icons\\putty++.ico"
+IDI_CFGICON ICON "..\\putty-0.79\\windows\\puttycfg.ico"
+
+#include "help.rc2"
+#include "putty-common.rc2"
 #include "tabbar_res.rc2"
 #include "pastedlg_res.rc2"
 
-#ifdef EMBED_CHM
-ID_CUSTOM_CHMFILE TYPE_CUSTOM_CHMFILE "../putty-0.76/doc/putty.chm"
-#endif
-
 #ifndef NO_MANIFESTS
-1 RT_MANIFEST "..\\putty-0.76\\windows\\putty.mft"
+1 RT_MANIFEST "..\\putty-0.79\\windows\\putty.mft"
 #endif /* NO_MANIFESTS */

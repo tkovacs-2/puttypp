@@ -123,12 +123,14 @@ static WinGuiFrontend *create_frontend(Conf *conf, const char *session_name) {
     wgf->seat.vt = &win_seat_vt;
     wgf->logpolicy.vt = &win_gui_logpolicy_vt;
     wgf->need_backend_resize = false;
-    wgf->request_resize.first_time = 1;
     wgf->wnd_proc.ignore_clip = false;
     wgf->syschar.pending_surrogate = 0;
     wgf->translate_key.alt_sum = 0;
     wgf->translate_key.compose_char = 0;
     wgf->translate_key.compose_keycode = 0;
+
+    wgf->window_name = dup_mb_to_wc(DEFAULT_CODEPAGE, 0, appname);
+    wgf->icon_name = dup_mb_to_wc(DEFAULT_CODEPAGE, 0, appname);
 
     memset(&wgf->ucsdata, 0, sizeof(wgf->ucsdata));
     conf_cache_data(wgf);
@@ -190,12 +192,12 @@ static void destroy_frontend(WinGuiFrontend *wgf) {
 
 static void set_title_from_session(WinGuiFrontend *wgf) {
     if (conf_get_bool(wgf->conf, CONF_win_name_always) || !IsIconic(frame_hwnd))
-        SetWindowText(frame_hwnd, wgf->window_name);
+        SetWindowTextW(frame_hwnd, wgf->window_name);
 }
 
 static void set_icon_title_from_session(WinGuiFrontend *wgf) {
     if (!conf_get_bool(wgf->conf, CONF_win_name_always) && IsIconic(frame_hwnd))
-        SetWindowText(frame_hwnd, wgf->icon_name);
+        SetWindowTextW(frame_hwnd, wgf->icon_name);
 }
 
 /* Calling of wintw_set_scrollbar() is connected to drawing in term_update() in terminal.c

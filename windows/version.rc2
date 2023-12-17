@@ -47,7 +47,13 @@ BEGIN
 	    VALUE "FileDescription",	APPDESC
 	    VALUE "InternalName",	APPNAME
 	    VALUE "OriginalFilename",	APPNAME
+#if (defined HELPVER)
+	    /* FIXME: this doesn't seem to be visible in Win7/Win10's UI.
+	     * Oh well. */
+	    VALUE "FileVersion",	PUTTYPP_VERSION HELPVER
+#else
 	    VALUE "FileVersion",	PUTTYPP_VERSION
+#endif
 	    VALUE "ProductVersion",	PUTTYPP_VERSION
 	    VALUE "LegalCopyright",	PUTTYPP_COPYRIGHT
 #if (!defined SNAPSHOT) && (!defined RELEASE) && (!defined PRERELEASE)

@@ -12,12 +12,14 @@ struct eventlog_stuff {
     int ninitial, ncircular, circular_first;
 };
 
-int dlg_verify_ssh_host_key(
+const SeatDialogPromptDescriptions *win_seat_prompt_descriptions(Seat *seat);
+
+SeatPromptResult dlg_confirm_ssh_host_key(
     HWND hwnd, const char *host, int port, const char *keytype,
-    char *keystr, const char *keydisp, char **fingerprints);
-int dlg_seat_confirm_weak_crypto_primitive(
+    char *keystr, SeatDialogText *text, HelpCtx helpctx);
+SeatPromptResult dlg_confirm_weak_crypto_primitive(
     const char *algtype, const char *algname);
-int dlg_confirm_weak_cached_hostkey(
+SeatPromptResult dlg_confirm_weak_cached_hostkey(
     const char *algname, const char *betteralgs);
 
 void dlg_eventlog(eventlog_stuff *es, const char *string);

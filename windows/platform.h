@@ -1,25 +1,22 @@
 /*
- * winstuff.h: Windows-specific inter-module stuff.
+ * windows/platform.h: Windows-specific inter-module stuff.
  */
 
-#ifndef PUTTY_WINSTUFF_H
-#define PUTTY_WINSTUFF_H
+#ifndef PUTTY_WINDOWS_PLATFORM_H
+#define PUTTY_WINDOWS_PLATFORM_H
 
-#ifndef AUTO_WINSOCK
 #include <winsock2.h>
-#endif
 #include <windows.h>
 #include <stdio.h>                     /* for FILENAME_MAX */
 
 /* We use uintptr_t for Win32/Win64 portability, so we should in
  * principle include stdint.h, which defines it according to the C
- * standard. But older versions of Visual Studio - including the one
- * used for official PuTTY builds as of 2015-09-28 - don't provide
+ * standard. But older versions of Visual Studio don't provide
  * stdint.h at all, but do (non-standardly) define uintptr_t in
  * stddef.h. So here we try to make sure _some_ standard header is
  * included which defines uintptr_t. */
 #include <stddef.h>
-#if !defined _MSC_VER || _MSC_VER >= 1600 || defined __clang__
+#if !HAVE_NO_STDINT_H
 #include <stdint.h>
 #endif
 
@@ -28,7 +25,7 @@
 
 #include "tree234.h"
 
-#include "winhelp.h"
+#include "help.h"
 
 #if defined _M_IX86 || defined _M_AMD64
 #define BUILDINFO_PLATFORM "x86 Windows"
@@ -37,6 +34,18 @@
 #else
 #define BUILDINFO_PLATFORM "Windows"
 #endif
+
+#if defined __GNUC__ || defined __clang__
+#define THREADLOCAL __thread
+#elif defined _MSC_VER
+#define THREADLOCAL __declspec(thread)
+#else
+#error Do not know how to declare thread-local storage with this toolchain
+#endif
+
+/* Randomly-chosen dwData value identifying a WM_COPYDATA message as
+ * being a Pageant transaction */
+#define AGENT_COPYDATA_ID 0x804e50ba
 
 struct Filename {
     char *path;
@@ -102,9 +111,19 @@ struct FontSpec *fontspec_new(
 #define LONG_PTR LONG
 #endif
 
-#define BOXFLAGS DLGWINDOWEXTRA
-#define BOXRESULT (DLGWINDOWEXTRA + sizeof(LONG_PTR))
-#define DF_END 0x0001
+#if !HAVE_STRTOUMAX
+/* Work around lack of strtoumax in older MSVC libraries */
+static inline uintmax_t strtoumax(const char *nptr, char **endptr, int base)
+{ return _strtoui64(nptr, endptr, base); }
+#endif
+
+typedef INT_PTR (*ShinyDlgProc)(HWND hwnd, UINT msg, WPARAM wParam,
+                                LPARAM lParam, void *ctx);
+int ShinyDialogBox(HINSTANCE hinst, LPCTSTR tmpl, const char *winclass,
+                   HWND hwndparent, ShinyDlgProc proc, void *ctx);
+void ShinyEndDialog(HWND hwnd, int ret);
+
+void centre_window(HWND hwnd);
 
 #ifndef __WINE__
 /* Up-to-date Windows headers warn that the unprefixed versions of
@@ -117,8 +136,6 @@ struct FontSpec *fontspec_new(
 #define stricmp strcasecmp
 #define strnicmp strncasecmp
 #endif
-
-#define BROKEN_PIPE_ERROR_CODE ERROR_BROKEN_PIPE   /* used in sshshare.c */
 
 /*
  * Dynamically linked functions. These come in two flavours:
@@ -143,8 +160,6 @@ struct FontSpec *fontspec_new(
 /* If you DECL_WINDOWS_FUNCTION as extern in a header file, use this to
  * define the function pointer in a source file */
 #define DEF_WINDOWS_FUNCTION(name) t_##name p_##name
-#define STR1(x) #x
-#define STR(x) STR1(x)
 #define GET_WINDOWS_FUNCTION_PP(module, name)                           \
     TYPECHECK((t_##name)NULL == name,                                   \
               (p_##name = module ?                                      \
@@ -204,7 +219,7 @@ typedef void *Ssh_gss_name;
 extern HINSTANCE hinst;
 
 /*
- * Help file stuff in winhelp.c.
+ * Help file stuff in help.c.
  */
 void init_help(void);
 void shutdown_help(void);
@@ -214,7 +229,7 @@ void quit_help(HWND hwnd);
 int has_embedded_chm(void);            /* 1 = yes, 0 = no, -1 = N/A */
 
 /*
- * Windows-specific clipboard helper function shared with windlg.c,
+ * Windows-specific clipboard helper function shared with dialog.c,
  * which takes the data string in the system code page instead of
  * Unicode.
  */
@@ -224,7 +239,7 @@ void write_aclip(int clipboard, char *, int, bool);
 
 /*
  * On Windows, we send MA_2CLK as the only event marking the second
- * press of a mouse button. Compare unix.h.
+ * press of a mouse button. Compare unix/platform.h.
  */
 #define MULTICLICK_ONLY_EVENT 1
 
@@ -243,7 +258,7 @@ void write_aclip(int clipboard, char *, int, bool);
  * couldn't write it if I wanted to, but I haven't bothered), so
  * it's a macro which always returns NULL. With any luck this will
  * cause the compiler to notice it can optimise away the
- * implementation of XDM-AUTHORIZATION-1 in x11fwd.c :-)
+ * implementation of XDM-AUTHORIZATION-1 in ssh/x11fwd.c :-)
  */
 #define sk_getxdmdata(socket, lenp) (NULL)
 
@@ -260,14 +275,14 @@ void write_aclip(int clipboard, char *, int, bool);
                                  "All Files (*.*)\0*\0\0\0")
 
 /*
- * Exports from winnet.c.
+ * Exports from network.c.
  */
 /* Report an event notification from WSA*Select */
 void select_result(WPARAM, LPARAM);
 /* Enumerate all currently live OS-level SOCKETs */
 SOCKET first_socket(int *);
 SOCKET next_socket(int *);
-/* Ask winnet.c whether we currently want to try to write to a SOCKET */
+/* Ask network.c whether we currently want to try to write to a SOCKET */
 bool socket_writable(SOCKET skt);
 /* Force a refresh of the SOCKET list by re-calling do_select for each one */
 void socket_reselect_all(void);
@@ -275,17 +290,18 @@ void socket_reselect_all(void);
 SockAddr *sk_namedpipe_addr(const char *pipename);
 /* Turn a WinSock error code into a string. */
 const char *winsock_error_string(int error);
+Socket *sk_newlistener_unix(const char *socketpath, Plug *plug);
 
 /*
- * winnet.c dynamically loads WinSock 2 or WinSock 1 depending on
+ * network.c dynamically loads WinSock 2 or WinSock 1 depending on
  * what it can get, which means any WinSock routines used outside
  * that module must be exported from it as function pointers. So
  * here they are.
  */
 DECL_WINDOWS_FUNCTION(extern, int, WSAAsyncSelect,
-                      (SOCKET, HWND, u_int, long));
+                      (SOCKET, HWND, u_int, LONG));
 DECL_WINDOWS_FUNCTION(extern, int, WSAEventSelect,
-                      (SOCKET, WSAEVENT, long));
+                      (SOCKET, WSAEVENT, LONG));
 DECL_WINDOWS_FUNCTION(extern, int, WSAGetLastError, (void));
 DECL_WINDOWS_FUNCTION(extern, int, WSAEnumNetworkEvents,
                       (SOCKET, WSAEVENT, LPWSANETWORKEVENTS));
@@ -303,17 +319,18 @@ DECL_WINDOWS_FUNCTION(extern, int, select,
 #endif
 
 /*
- * Implemented differently depending on the client of winnet.c, and
- * called by winnet.c to turn on or off WSA*Select for a given socket.
+ * Implemented differently depending on the client of network.c, and
+ * called by network.c to turn on or off WSA*Select for a given socket.
  */
 const char *do_select(SOCKET skt, bool enable);
 
 /*
- * Exports from winselgui.c and winselcli.c, each of which provides an
+ * Exports from select-{gui,cli}.c, each of which provides an
  * implementation of do_select.
  */
 void winselgui_set_hwnd(HWND hwnd);
 void winselgui_clear_hwnd(void);
+void winselgui_response(WPARAM wParam, LPARAM lParam);
 
 void winselcli_setup(void);
 SOCKET winselcli_unique_socket(void);
@@ -323,18 +340,24 @@ extern HANDLE winselcli_event;
  * Network-subsystem-related functions provided in other Windows modules.
  */
 Socket *make_handle_socket(HANDLE send_H, HANDLE recv_H, HANDLE stderr_H,
-                           Plug *plug, bool overlapped); /* winhsock */
+                           SockAddr *addr, int port, Plug *plug,
+                           bool overlapped); /* winhsock */
+Socket *make_deferred_handle_socket(DeferredSocketOpener *opener,
+                                    SockAddr *addr, int port, Plug *plug);
+void setup_handle_socket(Socket *s, HANDLE send_H, HANDLE recv_H,
+                         HANDLE stderr_H, bool overlapped);
+void handle_socket_set_psb_prefix(Socket *s, const char *prefix);
 Socket *new_named_pipe_client(const char *pipename, Plug *plug); /* winnpc */
 Socket *new_named_pipe_listener(const char *pipename, Plug *plug); /* winnps */
 
-/* A lower-level function in winnpc.c, which does most of the work of
- * new_named_pipe_client (including checking the ownership of what
- * it's connected to), but returns a plain HANDLE instead of wrapping
- * it into a Socket. */
+/* A lower-level function in named-pipe-client.c, which does most of
+ * the work of new_named_pipe_client (including checking the ownership
+ * of what it's connected to), but returns a plain HANDLE instead of
+ * wrapping it into a Socket. */
 HANDLE connect_to_named_pipe(const char *pipename, char **err);
 
 /*
- * Exports from winctrls.c.
+ * Exports from controls.c.
  */
 
 struct ctlpos {
@@ -344,12 +367,12 @@ struct ctlpos {
     int ypos, width;
     int xoff;
     int boxystart, boxid;
-    char *boxtext;
+    const char *boxtext;
 };
 void init_common_controls(void);       /* also does some DLL-loading */
 
 /*
- * Exports from winutils.c.
+ * Exports from utils.
  */
 typedef struct filereq_tag filereq; /* cwd for file requester */
 bool request_file(filereq *state, OPENFILENAME *of, bool preserve, bool save);
@@ -384,7 +407,7 @@ struct dlgparam {
     char *wintitle;                    /* title of actual window */
     char *errtitle;                    /* title of error sub-messageboxes */
     void *data;                        /* data to pass in refresh events */
-    union control *focused, *lastfocused; /* which ctrl has focus now/before */
+    dlgcontrol *focused, *lastfocused; /* which ctrl has focus now/before */
     bool shortcuts[128];               /* track which shortcuts in use */
     bool coloursel_wanted;             /* has an event handler asked for
                                         * a colour selector? */
@@ -399,60 +422,64 @@ struct dlgparam {
 };
 
 /*
- * Exports from winctrls.c.
+ * Exports from controls.c.
  */
 void ctlposinit(struct ctlpos *cp, HWND hwnd,
                 int leftborder, int rightborder, int topborder);
-HWND doctl(struct ctlpos *cp, RECT r,
-           char *wclass, int wstyle, int exstyle, char *wtext, int wid);
-void bartitle(struct ctlpos *cp, char *name, int id);
-void beginbox(struct ctlpos *cp, char *name, int idbox);
+HWND doctl(struct ctlpos *cp, RECT r, const char *wclass, int wstyle,
+           int exstyle, const char *wtext, int wid);
+void bartitle(struct ctlpos *cp, const char *name, int id);
+void beginbox(struct ctlpos *cp, const char *name, int idbox);
 void endbox(struct ctlpos *cp);
-void editboxfw(struct ctlpos *cp, bool password, char *text,
-               int staticid, int editid);
-void radioline(struct ctlpos *cp, char *text, int id, int nacross, ...);
+void editboxfw(struct ctlpos *cp, bool password, bool readonly,
+               const char *text, int staticid, int editid);
+void radioline(struct ctlpos *cp, const char *text, int id, int nacross, ...);
 void bareradioline(struct ctlpos *cp, int nacross, ...);
-void radiobig(struct ctlpos *cp, char *text, int id, ...);
-void checkbox(struct ctlpos *cp, char *text, int id);
-void statictext(struct ctlpos *cp, char *text, int lines, int id);
-void staticbtn(struct ctlpos *cp, char *stext, int sid,
-               char *btext, int bid);
-void static2btn(struct ctlpos *cp, char *stext, int sid,
-                char *btext1, int bid1, char *btext2, int bid2);
-void staticedit(struct ctlpos *cp, char *stext,
+void radiobig(struct ctlpos *cp, const char *text, int id, ...);
+void checkbox(struct ctlpos *cp, const char *text, int id);
+void button(struct ctlpos *cp, const char *btext, int bid, bool defbtn);
+void statictext(struct ctlpos *cp, const char *text, int lines, int id);
+void staticbtn(struct ctlpos *cp, const char *stext, int sid,
+               const char *btext, int bid);
+void static2btn(struct ctlpos *cp, const char *stext, int sid,
+                const char *btext1, int bid1, const char *btext2, int bid2);
+void staticedit(struct ctlpos *cp, const char *stext,
                 int sid, int eid, int percentedit);
-void staticddl(struct ctlpos *cp, char *stext,
+void staticddl(struct ctlpos *cp, const char *stext,
                int sid, int lid, int percentlist);
-void combobox(struct ctlpos *cp, char *text, int staticid, int listid);
-void staticpassedit(struct ctlpos *cp, char *stext,
+void combobox(struct ctlpos *cp, const char *text, int staticid, int listid);
+void staticpassedit(struct ctlpos *cp, const char *stext,
                     int sid, int eid, int percentedit);
-void bigeditctrl(struct ctlpos *cp, char *stext,
+void bigeditctrl(struct ctlpos *cp, const char *stext,
                  int sid, int eid, int lines);
-void ersatztab(struct ctlpos *cp, char *stext, int sid, int lid, int s2id);
-void editbutton(struct ctlpos *cp, char *stext, int sid,
-                int eid, char *btext, int bid);
-void sesssaver(struct ctlpos *cp, char *text,
+void ersatztab(struct ctlpos *cp, const char *stext, int sid, int lid,
+               int s2id);
+void editbutton(struct ctlpos *cp, const char *stext, int sid,
+                int eid, const char *btext, int bid);
+void sesssaver(struct ctlpos *cp, const char *text,
                int staticid, int editid, int listid, ...);
-void envsetter(struct ctlpos *cp, char *stext, int sid,
-               char *e1stext, int e1sid, int e1id,
-               char *e2stext, int e2sid, int e2id,
-               int listid, char *b1text, int b1id, char *b2text, int b2id);
-void charclass(struct ctlpos *cp, char *stext, int sid, int listid,
-               char *btext, int bid, int eid, char *s2text, int s2id);
-void colouredit(struct ctlpos *cp, char *stext, int sid, int listid,
-                char *btext, int bid, ...);
+void envsetter(struct ctlpos *cp, const char *stext, int sid,
+               const char *e1stext, int e1sid, int e1id,
+               const char *e2stext, int e2sid, int e2id,
+               int listid, const char *b1text, int b1id,
+               const char *b2text, int b2id);
+void charclass(struct ctlpos *cp, const char *stext, int sid, int listid,
+               const char *btext, int bid, int eid, const char *s2text,
+               int s2id);
+void colouredit(struct ctlpos *cp, const char *stext, int sid, int listid,
+                const char *btext, int bid, ...);
 void prefslist(struct prefslist *hdl, struct ctlpos *cp, int lines,
-               char *stext, int sid, int listid, int upbid, int dnbid);
+               const char *stext, int sid, int listid, int upbid, int dnbid);
 int handle_prefslist(struct prefslist *hdl,
                      int *array, int maxmemb,
                      bool is_dlmsg, HWND hwnd,
                      WPARAM wParam, LPARAM lParam);
 void progressbar(struct ctlpos *cp, int id);
-void fwdsetter(struct ctlpos *cp, int listid, char *stext, int sid,
-               char *e1stext, int e1sid, int e1id,
-               char *e2stext, int e2sid, int e2id,
-               char *btext, int bid,
-               char *r1text, int r1id, char *r2text, int r2id);
+void fwdsetter(struct ctlpos *cp, int listid, const char *stext, int sid,
+               const char *e1stext, int e1sid, int e1id,
+               const char *e2stext, int e2sid, int e2id,
+               const char *btext, int bid,
+               const char *r1text, int r1id, const char *r2text, int r2id);
 
 void dlg_auto_set_fixed_pitch_flag(dlgparam *dlg);
 bool dlg_get_fixed_pitch_flag(dlgparam *dlg);
@@ -461,11 +488,11 @@ void dlg_set_fixed_pitch_flag(dlgparam *dlg, bool flag);
 #define MAX_SHORTCUTS_PER_CTRL 16
 
 /*
- * This structure is what's stored for each `union control' in the
+ * This structure is what's stored for each `dlgcontrol' in the
  * portable-dialog interface.
  */
 struct winctrl {
-    union control *ctrl;
+    dlgcontrol *ctrl;
     /*
      * The control may have several components at the Windows
      * level, with different dialog IDs. To avoid needing N
@@ -496,7 +523,7 @@ struct winctrl {
 };
 /*
  * And this structure holds a set of the above, in two separate
- * tree234s so that it can find an item by `union control' or by
+ * tree234s so that it can find an item by `dlgcontrol' or by
  * dialog ID.
  */
 struct winctrls {
@@ -509,7 +536,7 @@ void winctrl_init(struct winctrls *);
 void winctrl_cleanup(struct winctrls *);
 void winctrl_add(struct winctrls *, struct winctrl *);
 void winctrl_remove(struct winctrls *, struct winctrl *);
-struct winctrl *winctrl_findbyctrl(struct winctrls *, union control *);
+struct winctrl *winctrl_findbyctrl(struct winctrls *, dlgcontrol *);
 struct winctrl *winctrl_findbyid(struct winctrls *, int);
 struct winctrl *winctrl_findbyindex(struct winctrls *, int);
 void winctrl_layout(struct dlgparam *dp, struct winctrls *wc,
@@ -524,13 +551,13 @@ void dp_add_tree(struct dlgparam *dp, struct winctrls *tree);
 void dp_cleanup(struct dlgparam *dp);
 
 /*
- * Exports from wincfg.c.
+ * Exports from config.c.
  */
 void win_setup_config_box(struct controlbox *b, HWND *hwndp, bool has_help,
                           bool midsession, int protocol);
 
 /*
- * Exports from windlg.c.
+ * Exports from dialog.c.
  */
 typedef struct eventlog_stuff eventlog_stuff;
 void defuse_showwindow(void);
@@ -545,13 +572,15 @@ void show_help(HWND hwnd);
 HWND event_log_window(void);
 
 /*
- * Exports from winmisc.c.
+ * Exports from utils.
  */
 extern DWORD osMajorVersion, osMinorVersion, osPlatformId;
 void init_winver(void);
 void dll_hijacking_protection(void);
+const char *get_system_dir(void);
 HMODULE load_system32_dll(const char *libname);
 const char *win_strerror(int error);
+bool should_have_security(void);
 void restrict_process_acl(void);
 bool restricted_acl(void);
 void escape_registry_key(const char *in, strbuf *out);
@@ -584,11 +613,10 @@ void EnableSizeTip(bool bEnable);
 /*
  * Exports from unicode.c.
  */
-struct unicode_data;
 void init_ucs(Conf *, struct unicode_data *);
 
 /*
- * Exports from winhandl.c.
+ * Exports from handle-io.c.
  */
 #define HANDLE_FLAG_OVERLAPPED 1
 #define HANDLE_FLAG_IGNOREEOF 2
@@ -597,21 +625,17 @@ struct handle;
 typedef size_t (*handle_inputfn_t)(
     struct handle *h, const void *data, size_t len, int err);
 typedef void (*handle_outputfn_t)(
-    struct handle *h, size_t new_backlog, int err);
+    struct handle *h, size_t new_backlog, int err, bool close);
 struct handle *handle_input_new(HANDLE handle, handle_inputfn_t gotdata,
                                 void *privdata, int flags);
 struct handle *handle_output_new(HANDLE handle, handle_outputfn_t sentdata,
                                  void *privdata, int flags);
 size_t handle_write(struct handle *h, const void *data, size_t len);
 void handle_write_eof(struct handle *h);
-HANDLE *handle_get_events(int *nevents);
 void handle_free(struct handle *h);
-void handle_got_event(HANDLE event);
 void handle_unthrottle(struct handle *h, size_t backlog);
 size_t handle_backlog(struct handle *h);
 void *handle_get_privdata(struct handle *h);
-struct handle *handle_add_foreign_event(HANDLE event,
-                                        void (*callback)(void *), void *ctx);
 /* Analogue of stdio_sink in marshal.h, for a Windows handle */
 struct handle_sink {
     struct handle *h;
@@ -620,17 +644,35 @@ struct handle_sink {
 void handle_sink_init(handle_sink *sink, struct handle *h);
 
 /*
- * Exports from winpgntc.c.
+ * Exports from handle-wait.c.
  */
+typedef struct HandleWait HandleWait;
+typedef void (*handle_wait_callback_fn_t)(void *);
+HandleWait *add_handle_wait(HANDLE h, handle_wait_callback_fn_t callback,
+                            void *callback_ctx);
+void delete_handle_wait(HandleWait *hw);
+
+typedef struct HandleWaitList {
+    HANDLE handles[MAXIMUM_WAIT_OBJECTS];
+    int nhandles;
+} HandleWaitList;
+HandleWaitList *get_handle_wait_list(void);
+void handle_wait_activate(HandleWaitList *hwl, int index);
+void handle_wait_list_free(HandleWaitList *hwl);
+
+/*
+ * Pageant-related pathnames.
+ */
+char *agent_mutex_name(void);
 char *agent_named_pipe_name(void);
 
 /*
- * Exports from winser.c.
+ * Exports from serial.c.
  */
 extern const struct BackendVtable serial_backend;
 
 /*
- * Exports from winjump.c.
+ * Exports from jump-list.c.
  */
 #define JUMPLIST_SUPPORTED             /* suppress #defines in putty.h */
 void add_session_to_jumplist(const char * const sessionname);
@@ -639,12 +681,12 @@ void clear_jumplist(void);
 bool set_explicit_app_user_model_id(void);
 
 /*
- * Exports from winnoise.c.
+ * Exports from noise.c.
  */
 bool win_read_random(void *buf, unsigned wanted); /* returns true on success */
 
 /*
- * Extra functions in winstore.c over and above the interface in
+ * Extra functions in storage.c over and above the interface in
  * storage.h.
  *
  * These functions manipulate the Registry section which mirrors the
@@ -677,10 +719,23 @@ char *get_jumplist_registry_entries(void);
 #define CLIPUI_DEFAULT_MOUSE CLIPUI_EXPLICIT
 #define CLIPUI_DEFAULT_INS CLIPUI_EXPLICIT
 
-/* In winmisc.c */
-char *registry_get_string(HKEY root, const char *path, const char *leaf);
+/* In utils */
+HKEY open_regkey_fn(bool create, HKEY base, const char *path, ...);
+#define open_regkey(create, base, ...) \
+    open_regkey_fn(create, base, __VA_ARGS__, (const char *)NULL)
+void close_regkey(HKEY key);
+void del_regkey(HKEY key, const char *name);
+char *enum_regkey(HKEY key, int index);
+bool get_reg_dword(HKEY key, const char *name, DWORD *out);
+bool put_reg_dword(HKEY key, const char *name, DWORD value);
+char *get_reg_sz(HKEY key, const char *name);
+bool put_reg_sz(HKEY key, const char *name, const char *str);
+strbuf *get_reg_multi_sz(HKEY key, const char *name);
+bool put_reg_multi_sz(HKEY key, const char *name, strbuf *str);
 
-/* In wincliloop.c */
+char *get_reg_sz_simple(HKEY key, const char *name, const char *leaf);
+
+/* In cliloop.c */
 typedef bool (*cliloop_pre_t)(void *vctx, const HANDLE **extra_handles,
                               size_t *n_extra_handles);
 typedef bool (*cliloop_post_t)(void *vctx, size_t extra_handle_index);
@@ -688,4 +743,40 @@ void cli_main_loop(cliloop_pre_t pre, cliloop_post_t post, void *ctx);
 bool cliloop_null_pre(void *vctx, const HANDLE **, size_t *);
 bool cliloop_null_post(void *vctx, size_t);
 
-#endif
+extern const struct BackendVtable conpty_backend;
+
+/* Functions that parametrise window.c between PuTTY and pterm */
+void gui_term_process_cmdline(Conf *conf, char *cmdline);
+const struct BackendVtable *backend_vt_from_conf(Conf *conf);
+const wchar_t *get_app_user_model_id(void);
+/* And functions in window.c that those files call back to */
+char *handle_restrict_acl_cmdline_prefix(char *cmdline);
+bool handle_special_sessionname_cmdline(char *cmdline, Conf *conf);
+bool handle_special_filemapping_cmdline(char *cmdline, Conf *conf);
+
+/* network.c: network error reporting helpers taking OS error code */
+void plug_closing_system_error(Plug *plug, DWORD error);
+void plug_closing_winsock_error(Plug *plug, DWORD error);
+
+SeatPromptResult make_spr_sw_abort_winerror(const char *prefix, DWORD error);
+
+HANDLE lock_interprocess_mutex(const char *mutexname, char **error);
+void unlock_interprocess_mutex(HANDLE mutex);
+
+typedef void (*aux_opt_error_fn_t)(const char *, ...);
+typedef struct AuxMatchOpt {
+    int index, argc;
+    char **argv;
+    bool doing_opts;
+    aux_opt_error_fn_t error;
+} AuxMatchOpt;
+AuxMatchOpt aux_match_opt_init(int argc, char **argv, int start_index,
+                               aux_opt_error_fn_t opt_error);
+bool aux_match_arg(AuxMatchOpt *amo, char **val);
+bool aux_match_opt(AuxMatchOpt *amo, char **val, const char *optname, ...);
+bool aux_match_done(AuxMatchOpt *amo);
+
+char *save_screenshot(HWND hwnd, const char *outfile);
+void gui_terminal_ready(HWND hwnd, Seat *seat, Backend *backend);
+
+#endif /* PUTTY_WINDOWS_PLATFORM_H */
