@@ -8,6 +8,7 @@ IDI_BACKEND_SSH                 ICON      "icons\\backend_ssh.ico"
 IDI_BACKEND_SSHCONN             ICON      "icons\\backend_sshconn.ico"
 IDI_BACKEND_SERIAL              ICON      "icons\\backend_serial.ico"
 IDI_BACKEND_SUPDUP              ICON      "icons\\backend_supdup.ico"
+IDI_BACKEND_CONPTY              ICON      "icons\\backend_conpty.ico"
 
 IDR_CLOSETAB                    BITMAP    "icons\\tabclose.bmp"
 IDR_CLOSETAB_INACT              BITMAP    "icons\\tabclose_inact.bmp"

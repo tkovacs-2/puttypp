@@ -139,6 +139,7 @@ static WinGuiFrontend *create_frontend(Conf *conf, const char *session_name) {
 
     wgf->term_palette_init = true;
     Terminal *term = term_init(conf, &wgf->ucsdata, &wgf->wintw);
+    term->ldisc = NULL; // missing from term_init
     term_palette_init_fix(term);
     wgf->term = term;
     setup_clipboards(term, conf);

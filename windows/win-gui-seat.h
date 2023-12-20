@@ -24,3 +24,5 @@ SeatPromptResult dlg_confirm_weak_cached_hostkey(
 
 void dlg_eventlog(eventlog_stuff *es, const char *string);
 int dlg_askappend(Filename *filename);
+
+#define PROT_CONPTY PROTOCOL_LIMIT

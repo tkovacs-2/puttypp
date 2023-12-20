@@ -441,6 +441,26 @@ const LogPolicyVtable win_gui_logpolicy_vt = {
 
 static WinGuiFrontend *wgf_active = NULL;
 
+static void add_error_message_to_term(WinGuiFrontend *wgf, const char *msg) {
+    term_data(wgf->term, "\r\n", 2);
+    term_set_trust_status(wgf->term, true);
+    term_data(wgf->term, "\033[31m", 5);
+    const char *p0 = msg;
+    const char *p = msg;
+    while (*p) {
+        if (*p == '\n' && p[1] != 0 && p != msg && p[-1] != '\r') {
+            term_data(wgf->term, p0, p-p0);
+            term_data(wgf->term, "\r\n", 2);
+            p++;
+            p0 = p;
+        }
+        p++;
+    }
+    term_data(wgf->term, p0, p-p0);
+    term_data(wgf->term, "\033[0m", 4);
+    term_set_trust_status(wgf->term, false);
+}
+
 static void start_backend(WinGuiFrontend *wgf)
 {
     Conf *conf = wgf->conf;
@@ -462,14 +482,13 @@ static void start_backend(WinGuiFrontend *wgf)
     if (error) {
         char *str = dupprintf("%s Error", appname);
         char *msg;
-        if (cmdline_tooltype & TOOLTYPE_NONNETWORK) {
+        if (conf_get_int(conf, CONF_protocol) == PROT_CONPTY) {
             /* Special case for pterm. */
             msg = dupprintf("Unable to open terminal:\n%s", error);
         } else {
             msg = dupprintf("Unable to open connection to\n%s\n%s",
                               conf_dest(conf), error);
         }
-        sfree(error);
         MessageBox(NULL, msg, str, MB_ICONERROR | MB_OK);
         sfree(str);
         sfree(msg);
@@ -480,6 +499,8 @@ static void start_backend(WinGuiFrontend *wgf)
         if (realhost) {
             sfree(realhost);
         }
+        add_error_message_to_term(wgf, error);
+        sfree(error);
         return;
     }
     term_setup_window_titles(term, realhost);
@@ -551,24 +572,7 @@ static void remote_close(WinGuiFrontend *wgf, int exitcode, const char *msg) {
         return;
     }
     tab_bar_set_tab_unusable(wgf->tab_index, true);
-
-    term_data(wgf->term, "\r\n", 2);
-    term_set_trust_status(wgf->term, true);
-    term_data(wgf->term, "\033[31m", 5);
-    const char *p0 = msg;
-    const char *p = msg;
-    while (*p) {
-        if (*p == '\n' && p[1] != 0 && p != msg && p[-1] != '\r') {
-            term_data(wgf->term, p0, p-p0);
-            term_data(wgf->term, "\r\n", 2);
-            p++;
-            p0 = p;
-        }
-        p++;
-    }
-    term_data(wgf->term, p0, p-p0);
-    term_data(wgf->term, "\033[0m", 4);
-    term_set_trust_status(wgf->term, false);
+    add_error_message_to_term(wgf, msg);
 }
 
 static HFONT get_dpi_aware_tab_bar_font() {
@@ -605,6 +609,8 @@ HINSTANCE hinst;
 static const char *term_class_name = "TermWindow";
 
 extern const char *cmdline_session_name;
+extern const BackendVtable conpty_backend;
+extern BackendVtable conpty_backend_puttypp;
 
 int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
 {
@@ -657,6 +663,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         sfree(str);
         return 1;
     }
+
+    conpty_backend_puttypp = conpty_backend;
+    conpty_backend_puttypp.protocol = PROT_CONPTY;
 
     /*
      * Process the command line.

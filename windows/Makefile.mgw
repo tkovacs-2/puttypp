@@ -348,15 +348,16 @@ SOURCES := ../putty-0.79/windows/utils/agent_mutex_name.c \
             ../putty-0.79/stubs/null-opener.c \
             ../putty-0.79/stubs/null-plug.c \
             ../putty-0.79/stubs/null-seat.c \
-            ../be_list.c \
             $(OBJDIR)/commitid.c\
+            ../be_list.c \
             ../windows/dialog.c \
             ../windows/pastedlg.c \
             ../windows/pointerarray.c \
             ../windows/putty.c \
             ../windows/shinydialogbox.c \
             ../windows/tabbar.c \
-            ../windows/window.c
+            ../windows/window.c \
+            ../windows/conpty.c
 
 RESOURCE := ../windows/putty.rc
 
@@ -384,7 +385,7 @@ $(OBJDIR):
 	mkdir -p $(OBJDIR)
 
 OBJECTS := $(call getobjdir,$(SOURCES),o)
-DFILES := $(call getobjdir,$(SOURCES),d))
+DFILES := $(call getobjdir,$(SOURCES),d)
 
 -include $(DFILES)
 
@@ -398,7 +399,7 @@ $(OBJDIR)/putty.res.o: $(RESOURCE) $(OBJDIR)/licence.h $(wildcard ../windows/ico
 	$(RC) $(RCFL) $(RCFLAGS) --preprocessor-arg -MMD --preprocessor-arg -MF$(@:.o=.d) --preprocessor-arg -MT$@ --preprocessor-arg -DRC_INVOKED --preprocessor-arg -xc-header $(RESOURCE) -o $@
 
 putty++.exe: $(OBJECTS) $(OBJDIR)/putty.res.o
-	$(CC) -mwindows $(LDFLAGS) -o $@ -Wl,-Map,$(OBJDIR)/putty.map $^ -ladvapi32 -lcomdlg32 -lgdi32 -limm32 -lole32 -lshell32 -luser32 -lcomctl32
+	$(CC) -mwindows $(LDFLAGS) -o $@ -Wl,-Map,$(OBJDIR)/putty.map $^ -ladvapi32 -lcomdlg32 -lgdi32 -limm32 -lole32 -lshell32 -luser32 -lcomctl32 -lkernel32
 
 clean:
 	rm -rf $(OBJDIR) *.exe

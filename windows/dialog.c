@@ -728,6 +728,106 @@ void defuse_showwindow(void)
     }
 }
 
+static handler_fn orig_config_host_handler = NULL;
+static handler_fn orig_config_protocols_handler = NULL;
+static dlgcontrol *orig_port_ctrl = NULL;
+static char *orig_hostname = NULL;
+
+static void free_orig_hostname() {
+    sfree(orig_hostname);
+    orig_hostname = NULL;
+}
+
+static void show_editbox(dlgcontrol *ctrl, dlgparam *dlg, int show) {
+    for (int i = 0; i < dlg->nctrltrees; i++) {
+        struct winctrl *c = winctrl_findbyctrl(dlg->controltrees[i], ctrl);
+        if (c) {
+            ShowWindow(GetDlgItem(dlg->hwnd, c->base_id), show);
+            ShowWindow(GetDlgItem(dlg->hwnd, c->base_id+1), show);
+        }
+    }
+}
+
+static void config_host_handler(dlgcontrol *ctrl, dlgparam *dlg,
+                                void *data, int event) {
+    Conf *conf = (Conf *)data;
+    if (event == EVENT_REFRESH) {
+        if (conf_get_int(conf, CONF_protocol) == PROT_CONPTY) {
+            if (!orig_hostname) {
+                orig_hostname = dupstr(conf_get_str(conf, CONF_host));
+                conf_set_str(conf, CONF_host, "\r");
+                show_editbox(ctrl, dlg, SW_HIDE);
+                show_editbox(orig_port_ctrl, dlg, SW_HIDE);
+            }
+            return;
+        } else {
+            if (orig_hostname) {
+                if (strcmp(conf_get_str(conf, CONF_host), "\r") == 0) {
+                    conf_set_str(conf, CONF_host, orig_hostname);
+                }
+                free_orig_hostname();
+                show_editbox(ctrl, dlg, SW_SHOWNORMAL);
+                show_editbox(orig_port_ctrl, dlg, SW_SHOWNORMAL);
+            }
+        }
+    } else if (event == EVENT_VALCHANGE) {
+        if (conf_get_int(conf, CONF_protocol) == PROT_CONPTY) {
+            return;
+        }
+    }
+    orig_config_host_handler(ctrl, dlg, data, event);
+}
+
+struct hostport {
+    dlgcontrol *host, *port, *protradio, *protlist;
+    bool mid_refresh;
+};
+
+static void config_protocols_handler(dlgcontrol *ctrl, dlgparam *dlg,
+                                     void *data, int event) {
+    Conf *conf = (Conf *)data;
+    struct hostport *hp = (struct hostport *)ctrl->context.p;
+
+    if (event == EVENT_REFRESH && ctrl == hp->protlist) {
+        int curproto = conf_get_int(conf, CONF_protocol);
+        hp->mid_refresh = true;
+        int curentry = -1;
+        dlg_update_start(ctrl, dlg);
+        dlg_listbox_clear(ctrl, dlg);
+        for (size_t i = n_ui_backends; backends[i]; i++) {
+            dlg_listbox_addwithid(ctrl, dlg,
+                                  backends[i]->displayname_tc,
+                                  backends[i]->protocol);
+            if (backends[i]->protocol == curproto)
+                curentry = i - n_ui_backends;
+        }
+        if (curentry > 0) {
+            dlg_listbox_select(ctrl, dlg, curentry);
+        } else {
+            dlg_listbox_select(ctrl, dlg, 0);
+        }
+        dlg_update_done(ctrl, dlg);
+        hp->mid_refresh = false;
+        return;
+    }
+    orig_config_protocols_handler(ctrl, dlg, data, event);
+}
+
+static void override_hostport_handlers(struct controlbox *ctrlbox) {
+    struct controlset *s = ctrl_getset(ctrlbox, "Session", "hostport", NULL);
+    for (int i=0; i<s->ncontrols; i++) {
+        dlgcontrol *c = s->ctrls[i];
+        if (c->type == CTRL_LISTBOX) {
+            struct hostport *hp = (struct hostport *)c->context.p;
+            orig_config_host_handler = hp->host->handler;
+            hp->host->handler = config_host_handler;
+            orig_config_protocols_handler = hp->protlist->handler;
+            hp->protlist->handler = config_protocols_handler;
+            orig_port_ctrl = hp->port;
+        }
+    }
+}
+
 struct sessionsaver_data {
     dlgcontrol *editbox, *listbox, *loadbutton, *savebutton, *delbutton;
     dlgcontrol *okbutton, *cancelbutton;
@@ -778,15 +878,19 @@ bool do_config(HWND parent, Conf *conf, const char **session_name)
     dlg_auto_set_fixed_pitch_flag(pds->dp);
 
     pds->dp->shortcuts['g'] = true;          /* the treeview: `Cate&gory' */
-
+    override_hostport_handlers(pds->ctrlbox);
     ret = ShinyDialogBox(hinst, MAKEINTRESOURCE(IDD_MAINBOX), "PuTTYConfigBox",
                          parent, GenericMainDlgProc, pds);
+    free_orig_hostname();
     if (ret) {
         const char *t = get_session_name(pds->ctrlbox);
         if (*t) {
             *session_name = t;
         } else {
             sfree((char *)t);
+            if (conf_get_int(conf, CONF_protocol) == PROT_CONPTY) {
+                *session_name = dupstr("conpty");
+            }
         }
     }
 

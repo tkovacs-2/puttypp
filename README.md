@@ -23,6 +23,7 @@ Based on this and the original cmake files you can adapt for other environments.
    A new folder name putty-0.79 should appear with the original Putty 0.79 source inside.
 4. Remove the following files from the putty-0.79 folder:
      putty-0.79/be_list.c
+     putty-0.79/windows/conpty.c
      putty-0.79/windows/dialog.c
      putty-0.79/windows/platform.h
      putty-0.79/windows/putty.c
