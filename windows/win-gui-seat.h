@@ -18,9 +18,9 @@ SeatPromptResult dlg_confirm_ssh_host_key(
     HWND hwnd, const char *host, int port, const char *keytype,
     char *keystr, SeatDialogText *text, HelpCtx helpctx);
 SeatPromptResult dlg_confirm_weak_crypto_primitive(
-    const char *algtype, const char *algname);
+    SeatDialogText *text);
 SeatPromptResult dlg_confirm_weak_cached_hostkey(
-    const char *algname, const char *betteralgs);
+    SeatDialogText *text);
 
 void dlg_eventlog(eventlog_stuff *es, const char *string);
 int dlg_askappend(Filename *filename);

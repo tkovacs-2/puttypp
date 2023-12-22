@@ -365,17 +365,17 @@ static SeatPromptResult win_seat_confirm_ssh_host_key(
 }
 
 static SeatPromptResult win_seat_confirm_weak_crypto_primitive(
-    Seat *seat, const char *algtype, const char *algname,
+    Seat *seat, SeatDialogText *text,
     void (*callback)(void *ctx, SeatPromptResult result), void *ctx)
 {
-    return dlg_confirm_weak_crypto_primitive(algtype, algname);
+    return dlg_confirm_weak_crypto_primitive(text);
 }
 
 static SeatPromptResult win_seat_confirm_weak_cached_hostkey(
-    Seat *seat, const char *algname, const char *betteralgs,
+    Seat *seat, SeatDialogText *text,
     void (*callback)(void *ctx, SeatPromptResult result), void *ctx)
 {
-    return dlg_confirm_weak_cached_hostkey(algname, betteralgs);
+    return dlg_confirm_weak_cached_hostkey(text);
 }
 
 static const SeatVtable win_seat_vt = {

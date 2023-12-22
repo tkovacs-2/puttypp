@@ -207,15 +207,8 @@ static void set_icon_title_from_session(WinGuiFrontend *wgf) {
    To workaround this the original handling is copied into below function and called
    at activation to trigger the call for wintw_set_scrollbar. */
 static bool update_sbar(Terminal *term) {
-    bool need_sbar_update = term->seen_disp_event ||
-        term->win_scrollbar_update_pending;
-    term->win_scrollbar_update_pending = false;
-    if (term->seen_disp_event && term->scroll_on_disp) {
-        term->disptop = 0;         /* return to main screen */
-        term->seen_disp_event = false;
-        need_sbar_update = true;
-    }
-    if (need_sbar_update) {
+    if (term->win_scrollbar_update_pending) {
+        term->win_scrollbar_update_pending = false;
         int sblines = count234(term->scrollback);
         if (term->erase_to_scrollback &&
             term->alt_which && term->alt_screen) {
@@ -223,8 +216,9 @@ static bool update_sbar(Terminal *term) {
         }
         wintw_set_scrollbar(term->win, sblines + term->rows,
                             sblines + term->disptop, term->rows);
+        return true;
     }
-    return need_sbar_update;
+    return false;
 }
 
 static void set_scrollbar_from_session(WinGuiFrontend *wgf, bool redraw) {

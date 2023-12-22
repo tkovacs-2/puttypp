@@ -5,7 +5,7 @@
 #define APPDESC "SSH, Telnet, Rlogin, and SUPDUP client"
 
 IDI_MAINICON ICON "icons\\putty++.ico"
-IDI_CFGICON ICON "..\\putty-0.79\\windows\\puttycfg.ico"
+IDI_CFGICON ICON "..\\putty-0.80\\windows\\puttycfg.ico"
 
 #include "help.rc2"
 #include "putty-common.rc2"
@@ -13,5 +13,5 @@ IDI_CFGICON ICON "..\\putty-0.79\\windows\\puttycfg.ico"
 #include "pastedlg_res.rc2"
 
 #ifndef NO_MANIFESTS
-1 RT_MANIFEST "..\\putty-0.79\\windows\\putty.mft"
+1 RT_MANIFEST "..\\putty-0.80\\windows\\putty.mft"
 #endif /* NO_MANIFESTS */
