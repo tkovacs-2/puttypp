@@ -1,3 +1,3 @@
 
-#define PUTTYPP_VERSION "0.3"
-#define PUTTYPP_COPYRIGHT "Copyright (c) 2023 Tamas Kovacs (kovirw@gmail.com)"
+#define PUTTYPP_VERSION "0.4"
+#define PUTTYPP_COPYRIGHT "Copyright (c) 2024 Tamas Kovacs (kovirw@gmail.com)"
