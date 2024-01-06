@@ -161,10 +161,6 @@ static WinGuiFrontend *create_frontend(Conf *conf, const char *session_name) {
     wgf->remote_closed = true;
     wgf->delete_session = false;
 
-    wgf->si.total = wgf->term->rows;
-    wgf->si.page = wgf->term->rows;
-    wgf->si.start = 0;
-
     wgf->cursor_visible = true;
     wgf->cursor_forced_visible = false;
 
@@ -202,37 +198,30 @@ static void set_icon_title_from_session(WinGuiFrontend *wgf) {
 }
 
 /* Calling of wintw_set_scrollbar() is connected to drawing in term_update() in terminal.c
-   This means if scroll info has changed till session is not active the new status is
-   is not updated in the WinGuiFrontend.
-   To workaround this the original handling is copied into below function and called
-   at activation to trigger the call for wintw_set_scrollbar. */
-static bool update_sbar(Terminal *term) {
-    if (term->win_scrollbar_update_pending) {
-        term->win_scrollbar_update_pending = false;
-        int sblines = count234(term->scrollback);
-        if (term->erase_to_scrollback &&
-            term->alt_which && term->alt_screen) {
-                sblines += term->alt_sblines;
-        }
-        wintw_set_scrollbar(term->win, sblines + term->rows,
-                            sblines + term->disptop, term->rows);
-        return true;
+   This means if scroll info has changed till session is not active we don't get the
+   about the new status.
+   At activation we need to calculate it based on the Terminal data, but the
+   update_sbar() function doing this is static.
+   As a workaround the original handling is copied here. */
+static void update_sbar(Terminal *term) {
+    term->win_scrollbar_update_pending = false;
+    int sblines = count234(term->scrollback);
+    if (term->erase_to_scrollback &&
+        term->alt_which && term->alt_screen) {
+            sblines += term->alt_sblines;
     }
-    return false;
+    wintw_set_scrollbar(term->win, sblines + term->rows,
+                        sblines + term->disptop, term->rows);
 }
 
-static void set_scrollbar_from_session(WinGuiFrontend *wgf, bool redraw) {
-    if (!conf_get_bool(wgf->conf, is_full_screen() ?
-                       CONF_scrollbar_in_fullscreen : CONF_scrollbar))
-        return;
-
+static void set_scrollbar(int total, int start, int page, bool redraw) {
     SCROLLINFO si;
     si.cbSize = sizeof(si);
     si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
     si.nMin = 0;
-    si.nMax = wgf->si.total - 1;
-    si.nPage = wgf->si.page;
-    si.nPos = wgf->si.start;
+    si.nMax = total - 1;
+    si.nPage = page;
+    si.nPos = start;
     SetScrollInfo(frame_hwnd, SB_VERT, &si, redraw);
 }
 
@@ -387,9 +376,7 @@ static void activate_session(WinGuiFrontend *wgf) {
     set_frame_style(wgf->conf);
     set_title_from_session(wgf);
     set_icon_title_from_session(wgf);
-    if (!update_sbar(wgf->term)) {
-        set_scrollbar_from_session(wgf, true);
-    }
+    update_sbar(wgf->term);
     update_mouse_pointer(wgf);
     reseteventlog(&wgf->eventlogstuff);
 }

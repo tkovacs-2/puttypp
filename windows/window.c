@@ -253,11 +253,6 @@ struct WinGuiFrontend {
     bool delete_session;
     int remote_exitcode;
     int tab_index;
-    struct {
-      int total;
-      int start;
-      int page;
-    } si;
     bool cursor_visible;
     bool cursor_forced_visible;
     struct {
@@ -768,7 +763,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
     /*
      * Initialise the scroll bar.
      */
-    set_scrollbar_from_session(wgf, false);
+    set_scrollbar(wgf->term->rows, 0, wgf->term->rows, false);
 
     /*
      * Prepare the mouse handler.
@@ -5073,11 +5068,11 @@ static void wintw_set_icon_title(TermWin *tw, const char *title, int codepage)
 static void wintw_set_scrollbar(TermWin *tw, int total, int start, int page)
 {
     WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
-    wgf->si.total = total;
-    wgf->si.page = page;
-    wgf->si.start = start;
     if (wgf != wgf_active) {return;}
-    set_scrollbar_from_session(wgf, true);
+    if (!conf_get_bool(wgf->conf, is_full_screen() ?
+                       CONF_scrollbar_in_fullscreen : CONF_scrollbar))
+        return;
+    set_scrollbar(total, start, page, true);
 }
 
 static bool wintw_setup_draw_ctx(TermWin *tw)

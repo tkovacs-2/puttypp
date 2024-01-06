@@ -11,7 +11,7 @@ static void destroy_frontend(WinGuiFrontend *wgf);
 
 static void set_title_from_session(WinGuiFrontend *wgf);
 static void set_icon_title_from_session(WinGuiFrontend *wgf);
-static void set_scrollbar_from_session(WinGuiFrontend *wgf, bool redraw);
+static void set_scrollbar(int total, int start, int page, bool redraw);
 static bool set_frame_style(Conf *conf);
 static void realize_palette(WinGuiFrontend *wgf);
 
