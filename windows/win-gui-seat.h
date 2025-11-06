@@ -26,3 +26,4 @@ void dlg_eventlog(eventlog_stuff *es, const char *string);
 int dlg_askappend(Filename *filename);
 
 #define PROT_CONPTY PROTOCOL_LIMIT
+#define PROT_SFTP (PROTOCOL_LIMIT+1)
