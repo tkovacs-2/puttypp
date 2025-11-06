@@ -521,4 +521,10 @@ static void handle_wm_initmenu(WPARAM wParam) {
         InsertMenu(menu, IDM_SHOWLOG,
                    MF_BYCOMMAND | MF_SEPARATOR, IDM_SPECIALSEP, 0);
     }
+
+    DeleteMenu(menu, IDM_DUPSESS_SFTP, MF_BYCOMMAND);
+    if (conf_get_int(wgf_active->conf, CONF_protocol) == PROT_SSH) {
+        InsertMenu(menu, IDM_DUPSESS_NEW, MF_BYCOMMAND | MF_ENABLED,
+                   IDM_DUPSESS_SFTP, "Duplicate as SFTP");
+    }
 }

@@ -6,6 +6,7 @@ const char *const appname = STR(PuTTY++);
 const int be_default_protocol = PROT_SSH;
 
 BackendVtable conpty_backend_puttypp;
+BackendVtable sftp_backend_puttypp;
 
 const struct BackendVtable *const backends[] = {
     &ssh_backend,
@@ -16,6 +17,7 @@ const struct BackendVtable *const backends[] = {
     &raw_backend,
     &sshconn_backend,
     &conpty_backend_puttypp,
+    &sftp_backend_puttypp,
     NULL
 };
 

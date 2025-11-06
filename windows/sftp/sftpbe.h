@@ -1,0 +1,41 @@
+#ifndef SFTPBE_H
+#define SFTPBE_H
+
+#include "putty.h"
+#include "sftpargs.h"
+
+typedef struct SftpCmd SftpCmd;
+typedef struct SftpCli SftpCli;
+typedef struct SftpCompletion SftpCompletion;
+
+typedef struct Sftp Sftp;
+struct Sftp {
+    bufchain received_data;
+    struct sftp_packet *receiving_pkt;
+    unsigned int receiving_pkt_fetched;
+
+    const char *homedir;
+    const char *pwd;
+    const char *lpwd;
+
+    SftpCmd *cmd;
+    SftpArgs args;
+
+    Seat *seat;
+    Backend backend;
+
+    SftpCli *cli;
+    int width;
+    int height;
+
+    Seat sshseat;
+    SeatVtable sshseat_vt;
+    Backend *ssh;
+    Conf *ssh_conf;
+
+    void *requests;
+
+    SftpCompletion *completion;
+};
+
+#endif

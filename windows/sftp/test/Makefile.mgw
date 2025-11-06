@@ -1,0 +1,98 @@
+
+CC = $(TOOLPATH)gcc
+
+OBJDIR := obj
+
+CFLAGS = -Wall -O0 -std=gnu99 -Wvla -D_WINDOWS -DWIN32S_COMPAT -g\
+		-D_NO_OLDNAMES -D__USE_MINGW_ANSI_STDIO=1 \
+		-DHAVE_STRTOUMAX=1 \
+		-DHAVE_ADDDLLDIRECTORY=1 \
+		-DHAVE_AFUNIX_H=1 \
+		-DHAVE_SETDEFAULTDLLDIRECTORIES=1 \
+		-DHAVE_GCP_RESULTSW=1 \
+		-I../../../putty-0.81/ \
+		-I../../../putty-0.81/windows \
+		-I../../../windows \
+		-I../../../windows/sftp \
+		-I../../../windows/sftp/test
+
+LDFLAGS = --static -g
+
+# _WIN32_IE is required to expose identifiers that only make sense on
+# systems with IE5+ installed, such as some arguments to SHGetFolderPath().
+# WINVER etc perform a similar function for FlashWindowEx().
+CFLAGS += -D_WIN32_IE=0x0500
+CFLAGS += -DWINVER=0x0500 -D_WIN32_WINDOWS=0x0410 -D_WIN32_WINNT=0x0500
+
+.SUFFIXES:
+
+SOURCES :=  ../../../putty-0.81/windows/utils/filename.c \
+            ../../../putty-0.81/windows/utils/fontspec.c \
+            ../../../putty-0.81/windows/utils/win_strerror.c \
+            ../../../putty-0.81/utils/bufchain.c \
+            ../../../putty-0.81/utils/burnstr.c \
+            ../../../putty-0.81/utils/conf.c \
+            ../../../putty-0.81/utils/dupcat.c \
+            ../../../putty-0.81/utils/dupprintf.c \
+            ../../../putty-0.81/utils/dupstr.c \
+            ../../../putty-0.81/utils/make_spr_sw_abort_static.c \
+            ../../../putty-0.81/utils/marshal.c \
+            ../../../putty-0.81/utils/memory.c \
+            ../../../putty-0.81/utils/out_of_memory.c \
+            ../../../putty-0.81/utils/ptrlen.c \
+            ../../../putty-0.81/utils/seat_connection_fatal.c \
+            ../../../putty-0.81/utils/smemclr.c \
+            ../../../putty-0.81/utils/strbuf.c \
+            ../../../putty-0.81/utils/tree234.c \
+            ../../../putty-0.81/utils/wildcard.c \
+            ../../../putty-0.81/stubs/null-seat.c \
+            ../../../putty-0.81/console.c \
+            ../../../windows/sftp/sftpbe.c \
+            ../../../windows/sftp/sftpfxp.c \
+            ../../../windows/sftp/sftpcli.c \
+            ../../../windows/sftp/sftpwcm.c \
+            ../../../windows/sftp/sftpcmd.c \
+            ../../../windows/sftp/sftpinit.c \
+            ../../../windows/sftp/sftpcmdcd.c \
+            ../../../windows/sftp/sftpcmdmkdir.c \
+            ../../../windows/sftp/sftpcmdls.c \
+            ../../../windows/sftp/sftpcmdrm.c \
+            ../../../windows/sftp/sftpcmdget.c \
+            ../../../windows/sftp/sftpcmdput.c \
+            ../../../windows/sftp/sftpcmdchmod.c \
+            ../../../windows/sftp/sftpcmdmv.c \
+            ../../../windows/sftp/sftpgetput.c \
+            ../../../windows/sftp/sftpprogressbar.c \
+            ../../../windows/sftp/sftpcompletion.c \
+            ../../../windows/sftp/sftpcompletion_readdir.c \
+            ../../../windows/sftp/sftpargs.c \
+            ../../../windows/sftp/linenoise/linenoise.c \
+            ../../../windows/sftp/psftp.c \
+            ../../../putty-0.81/ssh/sftpcommon.c \
+            ../../../putty-0.81/ssh/sftpserver.c \
+            ../../../putty-0.81/psftpcommon.c \
+            ../../../windows/sftp/test/testremote.c \
+            ../../../windows/sftp/test/testlocal.c \
+            ../../../windows/sftp/test/main.c
+
+getobjdir = $(patsubst %,$(OBJDIR)/%.$(2),$(subst /,__,$(subst putty-0.81/,,$(subst ../../../,,$(basename $(1))))))
+
+$(OBJDIR):
+	mkdir -p $(OBJDIR)
+
+OBJECTS := $(call getobjdir,$(SOURCES),o)
+DFILES := $(call getobjdir,$(SOURCES),d)
+
+-include $(DFILES)
+
+$(foreach SOURCE,$(SOURCES),$(eval $(call getobjdir,$(SOURCE),o): SOURCE := $(SOURCE)))
+$(OBJECTS): | $(OBJDIR)
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -MMD -MF $(@:.o=.d) -c $(SOURCE) -o $@
+
+sftptest.exe: $(OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lshlwapi
+
+clean:
+	rm -rf $(OBJDIR) *.exe
+
+FORCE:

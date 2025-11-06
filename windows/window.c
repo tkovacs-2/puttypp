@@ -55,6 +55,7 @@
 #define IDM_PASTE     0x01A0
 #define IDM_CONFIRM_PASTE 0x01B0
 #define IDM_SPECIALSEP 0x0200
+#define IDM_DUPSESS_SFTP 0x0210
 
 #define IDM_SPECIAL_MIN 0x0400
 #define IDM_SPECIAL_MAX 0x0800
@@ -605,7 +606,9 @@ static const char *term_class_name = "TermWindow";
 
 extern const char *cmdline_session_name;
 extern const BackendVtable conpty_backend;
+extern const BackendVtable sftp_backend;
 extern BackendVtable conpty_backend_puttypp;
+extern BackendVtable sftp_backend_puttypp;
 
 int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
 {
@@ -661,7 +664,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
 
     conpty_backend_puttypp = conpty_backend;
     conpty_backend_puttypp.protocol = PROT_CONPTY;
-
+    sftp_backend_puttypp = sftp_backend;
+    sftp_backend_puttypp.protocol = PROT_SFTP;
     /*
      * Process the command line.
      */
@@ -2429,6 +2433,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
           }
           case IDM_DUPSESS: {
             Conf *conf = conf_copy(wgf->conf);
+            const char *session_name = dupstr(wgf->session_name);
+            add_session(conf, session_name, wgf->tab_index+1);
+            break;
+          }
+          case IDM_DUPSESS_SFTP: {
+            Conf *conf = conf_copy(wgf->conf);
+            conf_set_int(conf, CONF_protocol, PROT_SFTP);
             const char *session_name = dupstr(wgf->session_name);
             add_session(conf, session_name, wgf->tab_index+1);
             break;
