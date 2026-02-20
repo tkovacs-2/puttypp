@@ -152,7 +152,7 @@ static void apply_anchor_info(HWND hwnd, AnchorInfo *ai, int item_count) {
     GetClientRect(hwnd, &parent);
     for (int i=0; i<item_count; i++, ai++) {
         HWND item_hwnd = GetDlgItem(hwnd, ai->item);
-        POINT p;
+        POINT p = {0, 0};
         if (ai->op == OP_MOVE) {
             apply_move_item(&parent, ai->anchor, &ai->distance_dpi, &p);
             DeferWindowPos(hdefer, item_hwnd, NULL, p.x, p.y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER);
@@ -198,8 +198,9 @@ typedef struct {
 static void set_text_font() {
     HFONT default_hfont = (HFONT)SendMessage(text_hwnd, WM_GETFONT, 0, 0);
     LOGFONT lf;
-    GetObject(default_hfont, sizeof(LOGFONT), &lf);
 
+    GetObject(default_hfont, sizeof(LOGFONT), &lf);
+    lf.lfHeight = MulDiv(lf.lfHeight, dpi_info.y, 96);
     text_hfont = CreateFont(lf.lfHeight, 0, 0, 0, FW_DONTCARE, false, false, false,
                                  lf.lfCharSet, OUT_DEFAULT_PRECIS,
                                  CLIP_DEFAULT_PRECIS, lf.lfQuality,
