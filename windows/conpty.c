@@ -9,7 +9,7 @@
 #include "putty.h"
 
 #include <windows.h>
-#include <consoleapi.h>
+#include "conpty_consoleapi.h"
 
 typedef struct ConPTY ConPTY;
 struct ConPTY {
