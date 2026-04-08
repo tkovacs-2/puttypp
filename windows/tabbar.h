@@ -1,6 +1,7 @@
 #ifndef TABBAR_H
 #define TABBAR_H
 
+#define TAB_BAR_NOTIFY_ID 0
 #define TCN_TABDELETE 1
 #define TCN_TABEXCHANGE 2
 

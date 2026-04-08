@@ -140,6 +140,7 @@ static WinGuiFrontend *create_frontend(Conf *conf, const char *session_name) {
     wgf->term_palette_init = true;
     Terminal *term = term_init(conf, &wgf->ucsdata, &wgf->wintw);
     term->ldisc = NULL; // missing from term_init
+    term->basic_erase_char.attr |= ATTR_ERASE;
     term_palette_init_fix(term);
     wgf->term = term;
     setup_clipboards(term, conf);
@@ -169,6 +170,8 @@ static WinGuiFrontend *create_frontend(Conf *conf, const char *session_name) {
 
 static void destroy_frontend(WinGuiFrontend *wgf) {
     DeleteObject(wgf->caretbm);
+
+    sfree(wgf->find.pattern);
 
     log_free(wgf->logctx);
     term_free(wgf->term);
@@ -274,7 +277,7 @@ static bool set_frame_style(Conf *conf) {
 
       SetWindowPos(hwnd, hwndInsertAfter, 0, 0, 0, 0,
                    SWP_NOACTIVATE | SWP_NOCOPYBITS |
-                   SWP_NOMOVE | SWP_NOSIZE | 
+                   SWP_NOMOVE | SWP_NOSIZE |
                    (hwndInsertAfter ? SWP_NOZORDER : 0) |
                    SWP_FRAMECHANGED);
       return true;
@@ -325,6 +328,7 @@ static void activate_session(WinGuiFrontend *wgf) {
     tab_bar_clear_tab_notified(wgf->tab_index);
     tab_bar_select_tab(wgf->tab_index);
     wgf_active = wgf;
+    wgf->find.update_finddlg_pending = true;
     realize_palette(wgf);
     int resize_action = conf_get_int(wgf->conf, CONF_resize_action);
     bool was_zoomed = wgf->resize_either.was_zoomed;
@@ -379,6 +383,7 @@ static void activate_session(WinGuiFrontend *wgf) {
     update_sbar(wgf->term);
     update_mouse_pointer(wgf);
     reseteventlog(&wgf->eventlogstuff);
+    update_finddlg(wgf);
 }
 
 static char *create_tab_title(int id, const char *session_name) {
@@ -425,7 +430,140 @@ static void delete_session(WinGuiFrontend *wgf) {
     }
 }
 
+static void show_finddlg(WinGuiFrontend *wgf) {
+    const int default_pattern_buffer_len = 16;
+    if (!wgf->find.pattern) {
+        wgf->find.pattern = snewn(default_pattern_buffer_len, wchar_t);
+        wgf->find.pattern_buffer_len = default_pattern_buffer_len;
+        wgf->find.pattern_len = 0;
+        wgf->find.pattern[0] = 0;
+    }
+    finddlg_create(wgf->find.pattern, true, wgf->find.ignore_case, wgf->find.whole_word);
+}
+
+static void update_finddlg(WinGuiFrontend *wgf) {
+    if (wgf->find.pattern) {
+        finddlg_create(wgf->find.pattern, false, wgf->find.ignore_case, wgf->find.whole_word);
+        if (wgf->find.pattern_len > 1) {
+            find_match_mask_alloc(&find_match_mask, wgf->term->rows, wgf->term->cols);
+            find_display(wgf->term, wgf->find.pattern, wgf->find.pattern_len, wgf->find.ignore_case, wgf->find.whole_word, &find_match_mask);
+        }
+    } else {
+        find_match_mask_free(&find_match_mask);
+        finddlg_destroy();
+    }
+    wgf->find.update_finddlg_pending = false;
+}
+
+static void update_find_match_mask(WinGuiFrontend *wgf)
+{
+    bool dirty = find_match_mask.dirty;
+    find_match_mask_alloc(&find_match_mask, wgf->term->rows, wgf->term->cols);
+    find_display(wgf->term, wgf->find.pattern, wgf->find.pattern_len, wgf->find.ignore_case, wgf->find.whole_word, &find_match_mask);
+    if (find_match_mask.dirty || dirty) {
+        term_invalidate(wgf->term);
+    }
+}
+
+static void drop_find_match_mask(WinGuiFrontend *wgf) {
+    bool dirty = find_match_mask.dirty;
+    find_match_mask_free(&find_match_mask);
+    if (dirty) {
+        term_invalidate(wgf->term);
+    }
+}
+
+static void update_find_pattern(WinGuiFrontend *wgf, int l) {
+    int buffer_len = l+1;
+    if (wgf->find.pattern_buffer_len < buffer_len) {
+        sfree(wgf->find.pattern);
+        wgf->find.pattern = snewn(buffer_len, wchar_t);
+        wgf->find.pattern_buffer_len = buffer_len;
+    }
+    wgf->find.pattern_len = finddlg_get_text(wgf->find.pattern, wgf->find.pattern_buffer_len);
+    assert(wgf->find.pattern_len == l);
+}
+
+static void scroll_to_row(WinGuiFrontend *wgf, int row) {
+    term_scroll(wgf->term, 0, row);
+    find_match_mask_clear(&find_match_mask);
+    find_display(wgf->term, wgf->find.pattern, wgf->find.pattern_len, wgf->find.ignore_case, wgf->find.whole_word, &find_match_mask);
+    term_update(wgf->term);
+}
+
+static void handle_finddlg_notify(LPARAM lParam) {
+    switch (((NMHDR *)lParam)->code) {
+      case FINDDLG_EDIT_CHANGED: {
+        int l = finddlg_get_text(NULL, 0);
+        update_find_pattern(wgf_active, l);
+        if (l > 1) {
+            update_find_match_mask(wgf_active);
+        } else {
+            drop_find_match_mask(wgf_active);
+        }
+        break;
+      }
+      case FINDDLG_EDIT_ENTER: {
+        if (wgf_active->find.pattern_len > 0) {
+            update_find_match_mask(wgf_active);
+        }
+        break;
+      }
+      case FINDDLG_IGNORE_CASE: {
+        wgf_active->find.ignore_case = finddlg_get_ignore_case();
+        if (find_match_mask.cells) {
+            update_find_match_mask(wgf_active);
+        }
+        break;
+      }
+      case FINDDLG_WHOLE_WORD: {
+        wgf_active->find.whole_word = finddlg_get_whole_word();
+        if (find_match_mask.cells) {
+            update_find_match_mask(wgf_active);
+        }
+        break;
+      }
+      case FINDDLG_UP: {
+        if (find_match_mask.cells) {
+            int row;
+            assert(wgf_active->find.pattern_len > 0);
+            if (find_above_display(wgf_active->term, wgf_active->find.pattern, wgf_active->find.pattern_len, wgf_active->find.ignore_case, wgf_active->find.whole_word, &row)) {
+                row -= wgf_active->term->rows/2;
+                scroll_to_row(wgf_active, row);
+            }
+        }
+        break;
+      }
+      case FINDDLG_DOWN: {
+        if (find_match_mask.cells) {
+            int row;
+            assert(wgf_active->find.pattern_len > 0);
+            if (find_below_display(wgf_active->term, wgf_active->find.pattern, wgf_active->find.pattern_len, wgf_active->find.ignore_case, wgf_active->find.whole_word, &row)) {
+                row -= wgf_active->term->rows/2;
+                scroll_to_row(wgf_active, row);
+            }
+        }
+        break;
+      }
+      case FINDDLG_CLOSE: {
+        finddlg_destroy();
+        sfree(wgf_active->find.pattern);
+        wgf_active->find.pattern = NULL;
+        wgf_active->find.pattern_buffer_len = 0;
+        wgf_active->find.pattern_len = 0;
+        wgf_active->find.ignore_case = false;
+        wgf_active->find.whole_word = false;
+        drop_find_match_mask(wgf_active);
+        break;
+      }
+    }
+}
+
 static void handle_wm_notify(LPARAM lParam) {
+    if (((NMHDR *)lParam)->idFrom == FINDDLG_NOTIFY_ID) {
+        handle_finddlg_notify(lParam);
+        return;
+    }
     struct TBHDR *nmhdr = (struct TBHDR *)lParam;
     int index = tab_bar_get_current_tab();
     switch (nmhdr->_hdr.code) {

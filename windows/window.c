@@ -54,6 +54,7 @@
 #define IDM_COPY      0x0190
 #define IDM_PASTE     0x01A0
 #define IDM_CONFIRM_PASTE 0x01B0
+#define IDM_FIND      0x01C0
 #define IDM_SPECIALSEP 0x0200
 #define IDM_DUPSESS_SFTP 0x0210
 
@@ -263,6 +264,15 @@ struct WinGuiFrontend {
     } resize_either;
     bool term_palette_init;
     int font_dpi;
+    struct {
+      wchar_t *pattern;
+      int pattern_buffer_len;
+      int pattern_len;
+      bool ignore_case;
+      bool whole_word;
+      bool data_arrived;
+      bool update_finddlg_pending;
+    } find;
 };
 
 HWND frame_hwnd = NULL;
@@ -273,6 +283,12 @@ static bool confirm_paste = true;
 #include "tabbar.h"
 #include "pointerarray.h"
 #include "pastedlg.h"
+#include "finddlg.h"
+#include "find/find.h"
+#include "find/finditerator.h"
+#include "draw_text_find_match.h"
+
+static FindMatchMask find_match_mask;
 
 static bool wintw_setup_draw_ctx(TermWin *);
 static void wintw_draw_text(TermWin *, int x, int y, wchar_t *text, int len,
@@ -306,7 +322,7 @@ static void wintw_unthrottle(TermWin *win, size_t bufsize);
 
 static const TermWinVtable windows_termwin_vt = {
     .setup_draw_ctx = wintw_setup_draw_ctx,
-    .draw_text = wintw_draw_text,
+    .draw_text = wintw_draw_text_find_match,
     .draw_cursor = wintw_draw_cursor,
     .draw_trust_sigil = wintw_draw_trust_sigil,
     .char_width = wintw_char_width,
@@ -436,6 +452,15 @@ const LogPolicyVtable win_gui_logpolicy_vt = {
 };
 
 static WinGuiFrontend *wgf_active = NULL;
+
+static void refresh_find_match_mask(WinGuiFrontend *wgf)
+{
+    if (find_match_mask.cells && !wgf->find.update_finddlg_pending) {
+        assert(wgf->find.pattern_len > 0);
+        find_match_mask_alloc(&find_match_mask, wgf->term->rows, wgf->term->cols);
+        find_display(wgf->term, wgf->find.pattern, wgf->find.pattern_len, wgf->find.ignore_case, wgf->find.whole_word, &find_match_mask);
+    }
+}
 
 static void add_error_message_to_term(WinGuiFrontend *wgf, const char *msg) {
     term_data(wgf->term, "\r\n", 2);
@@ -753,6 +778,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         extra_width = wr.right - wr.left - cr.right + cr.left + wgf->offset_width*2;
         extra_height = wr.bottom - wr.top - cr.bottom + cr.top +wgf->offset_height*2;
         adjust_extra_size();
+        finddlg_pin_to_frame(tab_bar_get_extra_height());
     }
 
     /*
@@ -814,6 +840,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
             AppendMenu(m, MF_ENABLED, IDM_FULLSCREEN, "&Full Screen");
             AppendMenu(m, MF_ENABLED, IDM_SHOWLOG, "&Event Log");
             AppendMenu(m, MF_ENABLED | (confirm_paste ? MF_CHECKED : MF_UNCHECKED), IDM_CONFIRM_PASTE, "Confirm Paste");
+            AppendMenu(m, MF_ENABLED, IDM_FIND, "&Find...");
             AppendMenu(m, MF_SEPARATOR, 0, 0);
             if (has_help())
                 AppendMenu(m, MF_ENABLED, IDM_HELP, "&Help");
@@ -892,7 +919,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
                 goto finished;         /* two-level break */
 
             HWND logbox = event_log_window();
-            if (!(IsWindow(logbox) && IsDialogMessage(logbox, &msg)))
+            if (!(IsWindow(logbox) && IsDialogMessage(logbox, &msg)) &&
+                !finddlg_is_dialog_message(&msg))
                 DispatchMessageW(&msg);
 
             /*
@@ -1406,30 +1434,34 @@ static int get_font_width(WinGuiFrontend *wgf, HDC hdc, const TEXTMETRIC *tm)
     return ret;
 }
 
-static void init_dpi_info(void)
+void init_window_dpi_info(HWND hwnd, POINT *dpi_info)
 {
-    if (dpi_info.x == 0 || dpi_info.y == 0) {
+    if (dpi_info->x == 0 || dpi_info->y == 0) {
         if (p_GetDpiForMonitor && p_MonitorFromWindow) {
             UINT dpiX, dpiY;
             HMONITOR currentMonitor = p_MonitorFromWindow(
-                frame_hwnd, MONITOR_DEFAULTTOPRIMARY);
+                hwnd, MONITOR_DEFAULTTOPRIMARY);
             if (p_GetDpiForMonitor(currentMonitor, MDT_EFFECTIVE_DPI,
                                    &dpiX, &dpiY) == S_OK) {
-                dpi_info.x = (int)dpiX;
-                dpi_info.y = (int)dpiY;
+                dpi_info->x = (int)dpiX;
+                dpi_info->y = (int)dpiY;
             }
         }
 
         /* Fall back to system DPI */
-        if (dpi_info.x == 0 || dpi_info.y == 0) {
-            HDC hdc = GetDC(frame_hwnd);
-            dpi_info.x = GetDeviceCaps(hdc, LOGPIXELSX);
-            dpi_info.y = GetDeviceCaps(hdc, LOGPIXELSY);
-            ReleaseDC(frame_hwnd, hdc);
+        if (dpi_info->x == 0 || dpi_info->y == 0) {
+            HDC hdc = GetDC(hwnd);
+            dpi_info->x = GetDeviceCaps(hdc, LOGPIXELSX);
+            dpi_info->y = GetDeviceCaps(hdc, LOGPIXELSY);
+            ReleaseDC(hwnd, hdc);
         }
     }
 }
 
+static void init_dpi_info(void)
+{
+    init_window_dpi_info(frame_hwnd, &dpi_info);
+}
 /*
  * Initialise all the fonts we will need initially. There may be as many as
  * three or as few as one.  The other (potentially) twenty-one fonts are done
@@ -1791,6 +1823,7 @@ static void wintw_request_resize(TermWin *tw, int w, int h)
     }
 
     term_resize_request_completed(term);
+    refresh_find_match_mask(wgf);
     InvalidateRect(term_hwnd, NULL, true);
 }
 
@@ -1900,6 +1933,7 @@ static void reset_window(WinGuiFrontend *wgf, int reinit) {
                 wgf->offset_width = (win_width-wgf->font_width*term->cols)/2;
                 wgf->offset_height = (win_height-wgf->font_height*term->rows)/2;
                 InvalidateRect(term_hwnd, NULL, true);
+                refresh_find_match_mask(wgf);
 #ifdef RDB_DEBUG_PATCH
                 debug("reset_window() -> Zoomed term_size\n");
 #endif
@@ -2013,6 +2047,7 @@ static void reset_window(WinGuiFrontend *wgf, int reinit) {
                     if ( width > term->cols )  width = term->cols;
                     term_size(term, height, width,
                               conf_get_int(conf, CONF_savelines));
+                    refresh_find_match_mask(wgf);
 #ifdef RDB_DEBUG_PATCH
                     debug("reset_window() -> term resize to (%d,%d)\n",
                           height, width);
@@ -2255,6 +2290,7 @@ static void wm_size_resize_term(WinGuiFrontend *wgf, LPARAM lParam, bool border)
     } else {
         if (term->cols != w || term->rows != h) {
             term_size(term, h, w, conf_get_int(conf, CONF_savelines));
+            refresh_find_match_mask(wgf);
         }
     }
 }
@@ -2343,7 +2379,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         }
         DestroyWindow(term_hwnd);
         destroy_tab_bar();
+        finddlg_destroy();
         pointer_array_reset(NULL);
+        find_match_mask_free(&find_match_mask);
         PostQuitMessage(0);
         return 0;
       case WM_INITMENUPOPUP:
@@ -2422,6 +2460,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
           case IDM_CONFIRM_PASTE:
             confirm_paste = !confirm_paste;
             check_menu_item(IDM_CONFIRM_PASTE, (confirm_paste ? MF_CHECKED : MF_UNCHECKED));
+            break;
+          case IDM_FIND:
+            show_finddlg(wgf_active);
             break;
           case IDM_NEWSESS: {
             Conf *conf = NULL;
@@ -2609,10 +2650,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 conf_get_int(prev_conf, CONF_savelines) ||
                 resize_action == RESIZE_FONT ||
                 (resize_action == RESIZE_EITHER && IsZoomed(hwnd)) ||
-                resize_action == RESIZE_DISABLED)
+                resize_action == RESIZE_DISABLED) {
                 term_size(term, conf_get_int(conf, CONF_height),
                           conf_get_int(conf, CONF_width),
                           conf_get_int(conf, CONF_savelines));
+                refresh_find_match_mask(wgf);
+            }
 
             /* Enable or disable the scroll bar, etc */
             {
@@ -3074,6 +3117,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             term_size(term, conf_get_int(conf, CONF_height),
                       conf_get_int(conf, CONF_width),
                       conf_get_int(conf, CONF_savelines));
+            refresh_find_match_mask(wgf);
             InvalidateRect(term_hwnd, NULL, true);
         }
         recompute_window_offset(wgf);
@@ -3186,6 +3230,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         }
         term_notify_window_pos(term, LOWORD(lParam), HIWORD(lParam));
         sys_cursor_update(wgf);
+        finddlg_pin_to_frame(tab_bar_get_extra_height());
         break;
       case WM_SIZE:
         if (is_term_hwnd) {
@@ -3262,6 +3307,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                     wm_size_resize_term(wgf, lParam, false);
                 reset_window(wgf, 0);
                 tab_bar_adjust_window();
+                finddlg_size_to_frame();
+                finddlg_pin_to_frame(tab_bar_get_extra_height());
                 adjust_terminal_window(frame_hwnd, term_hwnd);
             } else if (wParam == SIZE_RESTORED && was_zoomed) {
                 was_zoomed = false;
@@ -3274,6 +3321,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 else
                     reset_window(wgf, 0);
                 tab_bar_adjust_window();
+                finddlg_size_to_frame();
+                finddlg_pin_to_frame(tab_bar_get_extra_height());
                 adjust_terminal_window(frame_hwnd, term_hwnd);
             } else if (wParam == SIZE_MINIMIZED) {
                 /* do nothing */
@@ -3297,10 +3346,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 if (!resizing)
                     recompute_window_offset(wgf);
                 tab_bar_adjust_window();
+                finddlg_pin_to_frame(tab_bar_get_extra_height());
                 adjust_terminal_window(frame_hwnd, term_hwnd);
             } else {
                 reset_window(wgf, 0);
                 tab_bar_adjust_window();
+                finddlg_pin_to_frame(tab_bar_get_extra_height());
                 adjust_terminal_window(frame_hwnd, term_hwnd);
             }
         }
@@ -3314,12 +3365,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         dpi_info.y = HIWORD(wParam);
         dpi_changed_new_wnd_rect = *(RECT*)(lParam);
         tab_bar_set_measurement(get_dpi_aware_tab_bar_font());
+        finddlg_pin_to_frame(tab_bar_get_extra_height());
         reset_window(wgf, 3);
         return 0;
-      case WM_VSCROLL:
+      case WM_VSCROLL: {
         if (is_term_hwnd) {
           break;
         }
+        int disptop = term->disptop;
         switch (LOWORD(wParam)) {
           case SB_BOTTOM:
             term_scroll(term, -1, 0);
@@ -3354,6 +3407,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             term_scroll(term, 1, si.nTrackPos);
             break;
           }
+        }
+        if (term->disptop != disptop) {
+            refresh_find_match_mask(wgf);
         }
 
         if (in_scrollbar_loop) {
@@ -3401,6 +3457,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             term_update(term);
         }
         break;
+      }
       case WM_PALETTECHANGED:
         if (!is_term_hwnd) {
           SendMessage(term_hwnd, message, wParam, lParam);
@@ -3465,9 +3522,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                     TranslateMessage(&m);
                 } else break; /* pass to Windows for default processing */
             } else {
+                int disptop = term->disptop;
                 len = TranslateKey(wgf, message, wParam, lParam, buf);
-                if (len == -1)
+                if (len == -1) {
+                    if (term->disptop != disptop) {
+                        refresh_find_match_mask(wgf);
+                    }
                     return DefWindowProcW(hwnd, message, wParam, lParam);
+                }
 
                 if (len != 0) {
                     /*
@@ -3480,6 +3542,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                      */
                     term_keyinput(term, -1, buf, len);
                     show_mouseptr(wgf, false);
+                }
+                if (term->disptop != disptop) {
+                    refresh_find_match_mask(wgf);
                 }
             }
         }
@@ -3533,6 +3598,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
            */
           /* don't divide SURROGATE PAIR */
           if (ldisc) {
+            int disptop = term->disptop;
             for (i = 0; i < n; i += 2) {
               WCHAR hs = *(unsigned short *)(buff+i);
               if (IS_HIGH_SURROGATE(hs) && i+2 < n) {
@@ -3546,6 +3612,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
               }
               term_keyinputw(
                   term, (unsigned short *)(buff+i), 1);
+            }
+            if (term->disptop != disptop) {
+                refresh_find_match_mask(wgf);
             }
           }
           free(buff);
@@ -3563,11 +3632,19 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
 
             buf[1] = wParam;
             buf[0] = wParam >> 8;
+            int disptop = term->disptop;
             term_keyinput(term, kbd_codepage, buf, 2);
+            if (term->disptop != disptop) {
+                refresh_find_match_mask(wgf);
+            }
         } else {
             char c = (unsigned char) wParam;
+            int disptop = term->disptop;
             term_seen_key_event(term);
             term_keyinput(term, kbd_codepage, &c, 1);
+            if (term->disptop != disptop) {
+                refresh_find_match_mask(wgf);
+            }
         }
         return (0);
       case WM_CHAR:
@@ -3583,6 +3660,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
          */
         {
             wchar_t c = wParam;
+            int disptop = term->disptop;
 
             if (IS_HIGH_SURROGATE(c)) {
                 wgf->syschar.pending_surrogate = c;
@@ -3593,6 +3671,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 term_keyinputw(term, pair, 2);
             } else if (!IS_SURROGATE(c)) {
                 term_keyinputw(term, &c, 1);
+            }
+            if (term->disptop != disptop) {
+                refresh_find_match_mask(wgf);
             }
         }
         return 0;
@@ -3637,6 +3718,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             }
 
             /* process events when the threshold is reached */
+            int disptop = term->disptop;
+
             while (abs(wgf->wheel_accumulator) >= WHEEL_DELTA) {
                 int b;
 
@@ -3672,6 +3755,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                                 b == MBT_WHEEL_UP ?
                                 -where : where);
                 }
+            }
+            if (term->disptop != disptop) {
+                refresh_find_match_mask(wgf);
             }
             return 0;
         }
@@ -4628,7 +4714,11 @@ static int TranslateKey(WinGuiFrontend *wgf, UINT message, WPARAM wParam, LPARAM
             return 0;
         }
         if ((wParam == VK_PRIOR || wParam == VK_NEXT) && shift_state == 3) {
+            int disptop = term->disptop;
             term_scroll_to_selection(term, (wParam == VK_PRIOR ? 0 : 1));
+            if (term->disptop != disptop) {
+                refresh_find_match_mask(wgf);
+            }
             return 0;
         }
         if (wParam == VK_INSERT && shift_state == 2) {
@@ -5090,6 +5180,10 @@ static bool wintw_setup_draw_ctx(TermWin *tw)
 {
     WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
     if (wgf != wgf_active) {return false;}
+    if (wgf->find.data_arrived) {
+        wgf->find.data_arrived = false;
+        refresh_find_match_mask(wgf);
+    }
     assert(!wgf->wintw_hdc);
     wgf->wintw_hdc = make_hdc(wgf);
     return wgf->wintw_hdc != NULL;
@@ -6076,8 +6170,14 @@ static size_t win_seat_output(Seat *seat, SeatOutputType type,
 {
     WinGuiFrontend *wgf = container_of(seat, WinGuiFrontend, seat);
     Terminal *term = wgf->term;
-    if (wgf != wgf_active && len > 0) {
+    if (len > 0) {
+        if (wgf == wgf_active) {
+            if (term->curs.y < term->disptop+term->rows) {
+                wgf->find.data_arrived = true;
+            }
+        } else {
         tab_bar_set_tab_notified(wgf->tab_index);
+    }
     }
     return term_data(term, data, len);
 }
@@ -6135,3 +6235,4 @@ static bool win_seat_get_window_pixel_size(Seat *seat, int *x, int *y)
 }
 
 #include "frame.c"
+#include "draw_text_find_match.c"

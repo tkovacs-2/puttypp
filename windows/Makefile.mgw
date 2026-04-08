@@ -308,7 +308,6 @@ SOURCES := ../putty-0.81/windows/utils/agent_mutex_name.c \
             ../putty-0.81/timing.c \
             ../putty-0.81/windows/handle-wait.c \
             ../putty-0.81/windows/select-gui.c \
-            ../putty-0.81/terminal/terminal.c \
             ../putty-0.81/terminal/bidi.c \
             ../putty-0.81/ldisc.c \
             ../putty-0.81/config.c \
@@ -382,7 +381,13 @@ SOURCES := ../putty-0.81/windows/utils/agent_mutex_name.c \
             ../windows/sftp/linenoise/linenoise.c \
             ../windows/sftp/psftp.c \
             ../putty-0.81/ssh/sftpcommon.c \
-            ../putty-0.81/psftpcommon.c
+            ../putty-0.81/psftpcommon.c \
+            ../windows/anchor.c \
+            ../windows/finddlg.c \
+            ../windows/find/find.c \
+            ../windows/find/finditerator.c \
+            ../windows/find/kmp.c \
+            ../windows/terminal_public.c
 
 RESOURCE := ../windows/putty.rc
 

@@ -23,3 +23,6 @@ static void delete_session(WinGuiFrontend *wgf);
 
 static void handle_wm_notify(LPARAM lParam);
 static void handle_wm_initmenu(WPARAM wParam);
+
+static void show_finddlg(WinGuiFrontend *wgf);
+static void update_finddlg(WinGuiFrontend *wgf);

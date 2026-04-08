@@ -141,7 +141,7 @@ static void TabBarPlus_notify(int notifyCode, int tabIndex)
     struct TBHDR nmhdr;
     nmhdr._hdr.hwndFrom = _hSelf;
     nmhdr._hdr.code = notifyCode;
-    nmhdr._hdr.idFrom = 0;
+    nmhdr._hdr.idFrom = TAB_BAR_NOTIFY_ID;
     nmhdr._tabOrigin = tabIndex;
     SendMessage(GetParent(_hSelf), WM_NOTIFY, 0, (LPARAM)(&nmhdr));
 }
