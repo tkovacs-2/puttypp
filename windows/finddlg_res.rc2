@@ -1,0 +1,16 @@
+/* Dialog template for modeless find bar (no caption / no frame chrome). */
+#include <winresrc.h>
+#include "finddlg_res.h"
+
+IDD_FINDDLG DIALOGEX 0, 0, FINDDLG_INITIAL_WIDTH, FINDDLG_HEIGHT
+STYLE WS_POPUP | DS_SETFONT | WS_THICKFRAME
+FONT 8, "MS Shell Dlg"
+BEGIN
+    CONTROL         "", IDC_FINDDLG_GRIP, "STATIC", SS_OWNERDRAW, 0, 0, 4, 26
+    EDITTEXT        IDC_FINDDLG_EDIT, 24, 0, 118, 14
+    PUSHBUTTON      "U", IDC_FINDDLG_UP, 146, 0, 18, 14
+    PUSHBUTTON      "D", IDC_FINDDLG_DOWN, 164, 0, 18, 14
+    PUSHBUTTON      "x", IDC_FINDDLG_CLOSE, 4, 0, 16, 14
+    AUTOCHECKBOX    "Ignore case", IDC_FINDDLG_IGNORE_CASE, 24, 16, 60, 10
+    AUTOCHECKBOX    "Whole word", IDC_FINDDLG_WHOLE_WORD, 86, 16, 60, 10
+END

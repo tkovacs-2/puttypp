@@ -9,10 +9,7 @@
 - Prevent accidental paste of big clipboard data.
 - Embedded ConPTY backend from pterm.
 - Embedded psftp as SFTP backend (Beta, supports only filenames containing only ASCII characters).
-
-#### Planned features:
-- Find in terminal buffer.
-- Syntax highlight.
+- Find in terminal buffer (Beta, supports case insensitivity only for ASCII characters).
 
 #### Build:
 
@@ -38,13 +35,13 @@ Based on this and the original cmake files you can adapt for other environments.
 5. cd windows
 6. make -f Makefile.mgw TOOLPATH=<your arch>-w64-mingw32- putty++.exe
 
-#### Build and run unittests for SFTP backend:
+#### Build and run unittests for SFTP backend and find:
 
 1. Install the gdb Cygwin package.
-2. cd windows/sftp/test
-3. make -f Makefile.mgw TOOLPATH=i686-w64-mingw32- sftptest.exe
-4. ./sftptest.exe
-5. ../../memleak/memleak.sh sftptest.exe
+2. cd windows/<sftp/find>/test
+3. make -f Makefile.mgw TOOLPATH=i686-w64-mingw32- <sftp/find>test.exe
+4. ./<sftp/find>test.exe
+5. ../../memleak/memleak.sh <sftp/find>test.exe
 
 The memleak.sh is a memory leak detector by catching the calls for malloc/realloc/free in msvcrt.dll using on gdb.
 It will print the id-s of the aallocations which were not freed. You have to search the id-s in memleak.out file to see the call stack of the problematic allocations.

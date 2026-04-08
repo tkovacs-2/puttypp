@@ -1,0 +1,109 @@
+
+CC = $(TOOLPATH)gcc
+
+OBJDIR := obj
+
+CFLAGS = -Wall -O0 -std=gnu99 -Wvla -D_WINDOWS -DWIN32S_COMPAT -g\
+		-D_NO_OLDNAMES -D__USE_MINGW_ANSI_STDIO=1 \
+		-DHAVE_STRTOUMAX=1 \
+		-DHAVE_ADDDLLDIRECTORY=1 \
+		-DHAVE_AFUNIX_H=1 \
+		-DHAVE_SETDEFAULTDLLDIRECTORIES=1 \
+		-DHAVE_GCP_RESULTSW=1 \
+		-I../../../putty-0.80/ \
+		-I../../../putty-0.80/terminal \
+		-I../../../putty-0.80/windows \
+		-I../../../windows \
+		-I../../../windows/find \
+		-I../../../windows/find/test
+
+LDFLAGS = --static -g
+
+# _WIN32_IE is required to expose identifiers that only make sense on
+# systems with IE5+ installed, such as some arguments to SHGetFolderPath().
+# WINVER etc perform a similar function for FlashWindowEx().
+CFLAGS += -D_WIN32_IE=0x0500
+CFLAGS += -DWINVER=0x0500 -D_WIN32_WINDOWS=0x0410 -D_WIN32_WINNT=0x0500
+
+.SUFFIXES:
+
+SOURCES := ../../../putty-0.80/callback.c \
+           ../../../putty-0.80/ldisc.c \
+           ../../../putty-0.80/logging.c \
+           ../../../putty-0.80/settings.c \
+           ../../../putty-0.80/stubs/no-gss.c \
+           ../../../putty-0.80/stubs/no-print.c \
+           ../../../putty-0.80/stubs/no-timing.c \
+           ../../../putty-0.80/terminal/bidi.c \
+           ../../../putty-0.80/utils/base64_decode.c \
+           ../../../putty-0.80/utils/base64_decode_atom.c \
+           ../../../putty-0.80/utils/base64_encode.c \
+           ../../../putty-0.80/utils/base64_encode_atom.c \
+           ../../../putty-0.80/utils/bufchain.c \
+           ../../../putty-0.80/utils/burnstr.c \
+           ../../../putty-0.80/utils/cert-expr.c \
+           ../../../putty-0.80/utils/conf.c \
+           ../../../putty-0.80/utils/conf_dest.c \
+           ../../../putty-0.80/utils/conf_launchable.c \
+           ../../../putty-0.80/utils/ctrlparse.c \
+           ../../../putty-0.80/utils/dupcat.c \
+           ../../../putty-0.80/utils/dupprintf.c \
+           ../../../putty-0.80/utils/dupstr.c \
+           ../../../putty-0.80/utils/encode_utf8.c \
+           ../../../putty-0.80/utils/host_ca_new_free.c \
+           ../../../putty-0.80/utils/ltime.c \
+           ../../../putty-0.80/utils/make_spr_sw_abort_static.c \
+           ../../../putty-0.80/utils/marshal.c \
+           ../../../putty-0.80/utils/memory.c \
+           ../../../putty-0.80/utils/out_of_memory.c \
+           ../../../putty-0.80/utils/percent_decode.c \
+           ../../../putty-0.80/utils/percent_encode.c \
+           ../../../putty-0.80/utils/prompts.c \
+           ../../../putty-0.80/utils/ptrlen.c \
+           ../../../putty-0.80/utils/smemclr.c \
+           ../../../putty-0.80/utils/strbuf.c \
+           ../../../putty-0.80/utils/tree234.c \
+           ../../../putty-0.80/utils/wcwidth.c \
+           ../../../putty-0.80/utils/wildcard.c \
+           ../../../putty-0.80/windows/unicode.c \
+           ../../../putty-0.80/windows/storage.c \
+           ../../../putty-0.80/windows/no-jump-list.c \
+           ../../../putty-0.80/windows/utils/defaults.c \
+           ../../../putty-0.80/windows/utils/escape_registry_key.c \
+           ../../../putty-0.80/windows/utils/filename.c \
+           ../../../putty-0.80/windows/utils/fontspec.c \
+           ../../../putty-0.80/windows/utils/get_username.c \
+           ../../../putty-0.80/windows/utils/get_system_dir.c \
+           ../../../putty-0.80/windows/utils/load_system32_dll.c \
+           ../../../putty-0.80/windows/utils/open_for_write_would_lose_data.c \
+           ../../../putty-0.80/windows/utils/registry.c \
+           ../../../putty-0.80/windows/utils/win_strerror.c \
+           ../../../windows/terminal_public.c \
+           ../../../windows/find/kmp.c \
+           ../../../windows/find/finditerator.c \
+           ../../../windows/find/find.c \
+           ../../../windows/find/test/testkmp.c \
+           ../../../windows/find/test/testfind.c \
+           ../../../windows/find/test/main.c
+
+getobjdir = $(patsubst %,$(OBJDIR)/%.$(2),$(subst /,__,$(subst putty-0.80/,,$(subst ../../../,,$(basename $(1))))))
+
+$(OBJDIR):
+	mkdir -p $(OBJDIR)
+
+OBJECTS := $(call getobjdir,$(SOURCES),o)
+DFILES := $(call getobjdir,$(SOURCES),d)
+
+-include $(DFILES)
+
+$(foreach SOURCE,$(SOURCES),$(eval $(call getobjdir,$(SOURCE),o): SOURCE := $(SOURCE)))
+$(OBJECTS): | $(OBJDIR)
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -MMD -MF $(@:.o=.d) -c $(SOURCE) -o $@
+
+findtest.exe: $(OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+clean:
+	rm -rf $(OBJDIR) *.exe
+
+FORCE:

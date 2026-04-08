@@ -11,6 +11,7 @@ IDI_CFGICON ICON "..\\putty-0.80\\windows\\puttycfg.ico"
 #include "putty-common.rc2"
 #include "tabbar_res.rc2"
 #include "pastedlg_res.rc2"
+#include "finddlg_res.rc2"
 
 #ifndef NO_MANIFESTS
 1 RT_MANIFEST "..\\putty-0.80\\windows\\putty.mft"
