@@ -729,14 +729,8 @@ void defuse_showwindow(void)
 }
 
 static handler_fn orig_config_host_handler = NULL;
+static handler_fn orig_config_port_handler = NULL;
 static handler_fn orig_config_protocols_handler = NULL;
-static dlgcontrol *orig_port_ctrl = NULL;
-static char *orig_hostname = NULL;
-
-static void free_orig_hostname() {
-    sfree(orig_hostname);
-    orig_hostname = NULL;
-}
 
 static void show_editbox(dlgcontrol *ctrl, dlgparam *dlg, int show) {
     for (int i = 0; i < dlg->nctrltrees; i++) {
@@ -748,34 +742,48 @@ static void show_editbox(dlgcontrol *ctrl, dlgparam *dlg, int show) {
     }
 }
 
-static void config_host_handler(dlgcontrol *ctrl, dlgparam *dlg,
-                                void *data, int event) {
+static bool config_hostport_handler(dlgcontrol *ctrl, dlgparam *dlg,
+                                    void *data, int event) {
     Conf *conf = (Conf *)data;
     if (event == EVENT_REFRESH) {
         if (conf_get_int(conf, CONF_protocol) == PROT_CONPTY) {
-            if (!orig_hostname) {
-                orig_hostname = dupstr(conf_get_str(conf, CONF_host));
-                conf_set_str(conf, CONF_host, "\r");
-                show_editbox(ctrl, dlg, SW_HIDE);
-                show_editbox(orig_port_ctrl, dlg, SW_HIDE);
-            }
-            return;
+            show_editbox(ctrl, dlg, SW_HIDE);
+            return false;
         } else {
-            if (orig_hostname) {
-                if (strcmp(conf_get_str(conf, CONF_host), "\r") == 0) {
-                    conf_set_str(conf, CONF_host, orig_hostname);
-                }
-                free_orig_hostname();
-                show_editbox(ctrl, dlg, SW_SHOWNORMAL);
-                show_editbox(orig_port_ctrl, dlg, SW_SHOWNORMAL);
-            }
+            show_editbox(ctrl, dlg, SW_SHOWNORMAL);
         }
     } else if (event == EVENT_VALCHANGE) {
         if (conf_get_int(conf, CONF_protocol) == PROT_CONPTY) {
-            return;
+            return false;
         }
     }
-    orig_config_host_handler(ctrl, dlg, data, event);
+    return true;
+}
+
+static void config_host_handler(dlgcontrol *ctrl, dlgparam *dlg,
+                                void *data, int event) {
+    if (event == EVENT_REFRESH) {
+        Conf *conf = (Conf *)data;
+        if (conf_get_int(conf, CONF_protocol) == PROT_CONPTY) {
+            if (conf_get_str(conf, CONF_host)[0] == 0) {
+                conf_set_str(conf, CONF_host, "\r");
+            }
+        } else {
+            if (strcmp(conf_get_str(conf, CONF_host), "\r") == 0) {
+                conf_set_str(conf, CONF_host, "");
+            }
+        }
+    }
+    if (config_hostport_handler(ctrl, dlg, data, event)) {
+        orig_config_host_handler(ctrl, dlg, data, event);
+    }
+}
+
+static void config_port_handler(dlgcontrol *ctrl, dlgparam *dlg,
+                                void *data, int event) {
+    if (config_hostport_handler(ctrl, dlg, data, event)) {
+        orig_config_port_handler(ctrl, dlg, data, event);
+    }
 }
 
 struct hostport {
@@ -821,11 +829,24 @@ static void override_hostport_handlers(struct controlbox *ctrlbox) {
             struct hostport *hp = (struct hostport *)c->context.p;
             orig_config_host_handler = hp->host->handler;
             hp->host->handler = config_host_handler;
+            orig_config_port_handler = hp->port->handler;
+            hp->port->handler = config_port_handler;
             orig_config_protocols_handler = hp->protlist->handler;
             hp->protlist->handler = config_protocols_handler;
-            orig_port_ctrl = hp->port;
         }
     }
+}
+
+static void add_conpty_config_panel(struct controlbox *ctrlbox)
+{
+    struct controlset *s;
+
+    ctrl_settitle(ctrlbox, "Connection/ConPTY",
+                  "Command line for the local process attached to ConPTY");
+    s = ctrl_getset(ctrlbox, "Connection/ConPTY", "command", NULL);
+    ctrl_editbox(s, "Command", NO_SHORTCUT, 100,
+                 HELPCTX(ssh_command),
+                 conf_editbox_handler, I(CONF_remote_cmd), ED_STR);
 }
 
 struct sessionsaver_data {
@@ -871,6 +892,7 @@ bool do_config(HWND parent, Conf *conf, const char **session_name)
 
     setup_config_box(pds->ctrlbox, false, 0, 0);
     win_setup_config_box(pds->ctrlbox, &pds->dp->hwnd, has_help(), false, 0);
+    add_conpty_config_panel(pds->ctrlbox);
 
     pds->dp->wintitle = dupprintf("%s Configuration", appname);
     pds->dp->data = conf;
@@ -881,7 +903,6 @@ bool do_config(HWND parent, Conf *conf, const char **session_name)
     override_hostport_handlers(pds->ctrlbox);
     ret = ShinyDialogBox(hinst, MAKEINTRESOURCE(IDD_MAINBOX), "PuTTYConfigBox",
                          parent, GenericMainDlgProc, pds);
-    free_orig_hostname();
     if (ret) {
         const char *t = get_session_name(pds->ctrlbox);
         if (*t) {
@@ -913,6 +934,7 @@ bool do_reconfig(HWND parent, Conf *conf, const char **session_name, int protcfg
     setup_config_box(pds->ctrlbox, true, protocol, protcfginfo);
     win_setup_config_box(pds->ctrlbox, &pds->dp->hwnd, has_help(),
                          true, protocol);
+    add_conpty_config_panel(pds->ctrlbox);
 
     pds->dp->wintitle = dupprintf("%s Reconfiguration", appname);
     pds->dp->data = conf;
@@ -1256,7 +1278,7 @@ static INT_PTR HostKeyDialogProc(HWND hwnd, UINT msg,
             HFONT prev_font = (HFONT)SelectObject(
                 hdc, (HFONT)GetStockObject(SYSTEM_FONT));
             LOGFONT lf;
-            if (GetObject(prev_font, sizeof(lf), &lf)) { 
+            if (GetObject(prev_font, sizeof(lf), &lf)) {
                 lf.lfWeight = FW_BOLD;
                 lf.lfHeight = lf.lfHeight * 3 / 2;
                 HFONT bold_font = CreateFontIndirect(&lf);
