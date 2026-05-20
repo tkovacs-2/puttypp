@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <string.h>
 #include <wctype.h>
 #include "kmp.h"
@@ -15,11 +16,11 @@ typedef struct KmpContext {
     int *lps;
 } KmpContext;
 
+int32_t ucase_fold(int32_t c);
+bool u_isalnum(int32_t c);
+
 static unsigned long ucs_to_lower(unsigned long ucs) {
-    if (ucs <  0x10000) {
-        return towlower((wint_t)ucs);
-    }
-    return ucs;
+    return (unsigned long)ucase_fold((int32_t)ucs);
 }
 
 static bool is_word_ucs(unsigned long ucs) {
@@ -29,11 +30,7 @@ static bool is_word_ucs(unsigned long ucs) {
     if (ucs == (unsigned long)L'_') {
         return true;
     }
-    if (ucs < 0x10000) {
-        return iswalnum((wint_t)ucs) != 0;
-    }
-    /* Supplementary planes: treat as word characters for boundary checks */
-    return true;
+    return u_isalnum((int32_t)ucs);
 }
 
 static int wcs_to_ucs(const wchar_t *src, int src_len, bool ignore_case, unsigned long *ucs_out) {

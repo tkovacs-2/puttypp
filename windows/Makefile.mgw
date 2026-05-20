@@ -387,6 +387,8 @@ SOURCES := ../putty-0.81/windows/utils/agent_mutex_name.c \
             ../windows/find/find.c \
             ../windows/find/finditerator.c \
             ../windows/find/kmp.c \
+            ../windows/find/ucase.c \
+            ../windows/find/uchar.c \
             ../windows/terminal_public.c
 
 RESOURCE := ../windows/putty.rc

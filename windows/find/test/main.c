@@ -11,6 +11,7 @@
 
 int test_kmp(Terminal *term);
 int test_find(Terminal *term);
+int test_unicode();
 
 const char * const appname = "";
 const char commitid[4] = {0};
@@ -33,6 +34,7 @@ static Terminal *new_trem_for_test(struct unicode_data *ucsdata)
     term->ldisc = NULL;
     term->basic_erase_char.attr |= ATTR_ERASE;
     conf_free(conf);
+    term_size(term, 1, 2, 0);
     return term;
 }
 
@@ -42,6 +44,7 @@ int main()
     Terminal *term = new_trem_for_test(&ucsdata);
 
     int failures = 0;
+    failures += test_unicode();
     failures += test_kmp(term);
     failures += test_find(term);
 

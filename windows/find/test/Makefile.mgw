@@ -82,8 +82,11 @@ SOURCES := ../../../putty-0.81/callback.c \
            ../../../windows/find/kmp.c \
            ../../../windows/find/finditerator.c \
            ../../../windows/find/find.c \
+           ../../../windows/find/ucase.c \
+           ../../../windows/find/uchar.c \
            ../../../windows/find/test/testkmp.c \
            ../../../windows/find/test/testfind.c \
+           ../../../windows/find/test/testunicode.c \
            ../../../windows/find/test/main.c
 
 getobjdir = $(patsubst %,$(OBJDIR)/%.$(2),$(subst /,__,$(subst putty-0.81/,,$(subst ../../../,,$(basename $(1))))))
