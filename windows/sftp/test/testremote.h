@@ -15,6 +15,7 @@ typedef struct TestRemote {
 
   TestRemoteFile *root;
   TestRemoteFile *home;
+  bool is_dirty;
 } TestRemote;
 
 void testremote_init(TestRemote *tr);
@@ -39,4 +40,8 @@ void testremote_process_request(TestRemote *tr, struct sftp_packet *req);
 void testremote_process(TestRemote *tr);
 
 void testremote_connection_fatal(TestRemote *tr);
+
+bool testremote_is_dirty(TestRemote *tr);
+void testremote_set_clean(TestRemote *tr);
+
 #endif

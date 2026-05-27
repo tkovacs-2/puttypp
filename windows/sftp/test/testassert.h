@@ -1,7 +1,12 @@
 #ifndef TESTASSERT_H
 #define TESTASSERT_H
 
+#include <stdio.h>
+
 extern int assert_fail_count;
+
+#define DEFINE_ASSERT_FAIL_COUNTER \
+int assert_fail_count = 0;
 
 #define ASSERT_TRUE(expression) \
 if (!(expression)) { \

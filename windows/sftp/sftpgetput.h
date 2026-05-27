@@ -7,10 +7,11 @@
 typedef struct Sftp Sftp;
 
 typedef struct SftpDir {
-    const char *fname;
-    const char *outfname;
+    const char *fname; //utf8
+    const char *line_fname; //line codepage
+    const char *outfname; //utf8
     size_t nnames, namesize;
-    const char **ournames;
+    const char **ournames; //line codepage for get, utf8 for put
     size_t i;
 } SftpDir;
 

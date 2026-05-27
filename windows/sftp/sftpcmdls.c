@@ -1,13 +1,13 @@
 #include "sftpcmd.h"
 #include "sftputil.h"
 #include "sftpfxp.h"
+#include "sftpunicode.h"
 #include "psftp.h"
 
 typedef struct {
     SftpCmd cmd;
-    const char *dir;
-    const char *wildcard;
-    const char *cdir;
+    const char *dir; //utf8
+    const char *wildcard; //line codepage
     struct fxp_handle *dirh;
     struct list_directory_from_sftp_ctx *ctx;
 } SftpCmdLs;
@@ -18,22 +18,25 @@ static void send_close(Sftp *sftp, SftpCmd *cmd, struct fxp_handle *dirh)
     sftpcmd_set_request(cmd, SSH_FXP_CLOSE, fxp_close_send(dirh));
 }
 
-static Seat *list_directory_from_sftp_seat = NULL;
+static Sftp *list_directory_from_sftp = NULL;
 
 void list_directory_from_sftp_warn_unsorted(void)
 {
-    sftp_print(list_directory_from_sftp_seat, SEAT_OUTPUT_STDERR, "Directory is too large to sort; writing file names unsorted");
+    sftp_print(list_directory_from_sftp->seat, SEAT_OUTPUT_STDERR, "Directory is too large to sort; writing file names unsorted");
 }
 
 void list_directory_from_sftp_print(struct fxp_name *name)
 {
-    sftp_print(list_directory_from_sftp_seat, SEAT_OUTPUT_STDOUT, name->longname);
+    const char *name_utf8 = sftp_dup_utf8_from_line(list_directory_from_sftp->line_codepage, name->longname);
+    sftp_print(list_directory_from_sftp->seat, SEAT_OUTPUT_STDOUT, name_utf8);
+    sftp_dup_utf8_free(name_utf8, name->longname);
 }
 
 static SftpCmd *sftpcmdls_init(Sftp *sftp)
 {
     const char *dir;
-    char *unwcdir, *wildcard;
+    const char *wildcard;
+    char *unwcdir;
     int i = 1;
 
     while (i < sftp->args.argc && sftp->args.argv[i][0] == '-') {
@@ -56,16 +59,14 @@ static SftpCmd *sftpcmdls_init(Sftp *sftp)
 
     unwcdir = snewn(1 + strlen(dir), char);
     if (wc_unescape(unwcdir, dir)) {
-        dir = unwcdir;
         wildcard = NULL;
     } else {
         char *tmpdir;
         int len;
         bool check;
 
-        sfree(unwcdir);
         wildcard = stripslashes(dir, false);
-        unwcdir = dupstr(dir);
+        unwcdir = strcpy(unwcdir, dir);
         len = wildcard - dir;
         unwcdir[len] = '\0';
         if (len > 0 && unwcdir[len-1] == '/')
@@ -78,21 +79,32 @@ static SftpCmd *sftpcmdls_init(Sftp *sftp)
             sfree(unwcdir);
             return NULL;
         }
-        dir = unwcdir;
     }
 
+    dir = sftp_get_absolute_path(sftp->pwd, unwcdir);
+    sfree(unwcdir);
+    const char *line_dir = sftp_dup_utf8_to_line(sftp->line_codepage, dir, sftp->seat);
+    const char *line_wildcard = NULL;
+    if (wildcard) {
+        line_wildcard = sftp_utf8_to_line(sftp->line_codepage, dupstr(wildcard), sftp->seat);
+    }
+    if (!line_dir || (wildcard && !line_wildcard)) {
+        sftp_dup_utf8_free(line_dir, dir);
+        sfree((void *)dir);
+        return NULL;
+    }
 
     SftpCmdLs *cmdls = snew(SftpCmdLs);
-    cmdls->dir = sftp_get_absolute_path(sftp->pwd, dir);
-    sfree((void *)dir);
-    cmdls->wildcard = wildcard;
-    cmdls->cdir = NULL;
+    cmdls->dir = dir;
+    cmdls->wildcard = line_wildcard;
     cmdls->dirh = NULL;
     cmdls->ctx = NULL;
 
+    list_directory_from_sftp = sftp;
     sftpcmd_clear_request(&cmdls->cmd);
     sftp_set_sending_backend(sftp);
-    sftpcmd_set_request(&cmdls->cmd, SSH_FXP_REALPATH, fxp_realpath_send(cmdls->dir));
+    sftpcmd_set_request(&cmdls->cmd, SSH_FXP_REALPATH, fxp_realpath_send(line_dir));
+    sftp_dup_utf8_free(line_dir, dir);
     return &cmdls->cmd;
 }
 
@@ -101,20 +113,22 @@ static bool sftpcmdls_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *
     SftpCmdLs *cmdls = container_of(cmd, SftpCmdLs, cmd);
 
     if (cmd->req_type == SSH_FXP_REALPATH) {
-        cmdls->cdir = fxp_realpath_recv(pktin, cmd->req);
+        const char *line_dir = fxp_realpath_recv(pktin, cmd->req);
         sftpcmd_clear_request(cmd);
-        if (!cmdls->cdir) {
+        if (!line_dir) {
             sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "ls: unable to open %s: %s", cmdls->dir, fxp_error());
             return false;
         }
         sftp_set_sending_backend(sftp);
-        sftpcmd_set_request(cmd, SSH_FXP_OPENDIR, fxp_opendir_send(cmdls->cdir));
+        sftpcmd_set_request(cmd, SSH_FXP_OPENDIR, fxp_opendir_send(line_dir));
+        sfree((void *)cmdls->dir);
+        cmdls->dir = sftp_utf8_from_line(sftp->line_codepage, line_dir);
         return true;
     } else if (cmd->req_type == SSH_FXP_OPENDIR) {
         cmdls->dirh = fxp_opendir_recv(pktin, cmd->req);
         sftpcmd_clear_request(cmd);
         if (cmdls->dirh == NULL) {
-            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "ls: unable to open %s: %s", cmdls->cdir, fxp_error());
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "ls: unable to open %s: %s", cmdls->dir, fxp_error());
             return false;
         }
         cmdls->ctx = list_directory_from_sftp_new();
@@ -130,7 +144,7 @@ static bool sftpcmdls_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *
                 send_close(sftp, cmd, cmdls->dirh);
                 return true;
             }
-            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "ls: reading directory %s: %s", cmdls->cdir, fxp_error());
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "ls: reading directory %s: %s", cmdls->dir, fxp_error());
             send_close(sftp, cmd, cmdls->dirh);
             return true;
         }
@@ -140,7 +154,6 @@ static bool sftpcmdls_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *
             return true;
         }
 
-        list_directory_from_sftp_seat = sftp->seat;
         for (size_t i = 0; i < names->nnames; i++) {
             if (!cmdls->wildcard || wc_match(cmdls->wildcard, names->names[i].filename)) {
                 list_directory_from_sftp_feed(cmdls->ctx, &names->names[i]);
@@ -163,7 +176,7 @@ static void sftpcmdls_free(SftpCmd *cmd)
 {
     SftpCmdLs *cmdls = container_of(cmd, SftpCmdLs, cmd);
     sfree((void *)cmdls->dir);
-    sfree((void *)cmdls->cdir);
+    sfree((void *)cmdls->wildcard);
     if (cmdls->dirh) {
         sftp_free_fxphandle(cmdls->dirh);
     }

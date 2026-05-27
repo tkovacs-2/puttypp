@@ -1,6 +1,7 @@
 #include "sftpgetput.h"
 #include "sftpcmd.h"
 #include "sftputil.h"
+#include "sftpunicode.h"
 
 SftpDir *sftpdirstack_top(SftpDirStack *dirstack)
 {
@@ -16,7 +17,12 @@ SftpDir *sftpdirstack_pop(SftpDirStack *dirstack)
     if (!dir) {
         return NULL;
     }
-    sfree((void *)dir->fname);
+    if (dir->line_fname) {
+        sftp_dup_utf8_free(dir->fname, dir->line_fname);
+        sfree((void *)dir->line_fname);
+    } else {
+        sfree((void *)dir->fname);
+    }
     sfree((void *)dir->outfname);
     for (int i = 0; i < dir->nnames; i++) {
         sfree((void *)dir->ournames[i]);

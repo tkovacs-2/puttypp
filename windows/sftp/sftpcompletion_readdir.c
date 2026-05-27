@@ -2,6 +2,7 @@
 #include "sftputil.h"
 #include "sftpfxp.h"
 #include "sftpcompletion.h"
+#include "sftpunicode.h"
 
 typedef struct CompletionReaddir {
     SftpCmd cmd;
@@ -49,6 +50,10 @@ static void continue_completion(Sftp *sftp, CompletionReaddir *cmdreaddir)
 static SftpCmd *completion_readdir_init(Sftp *sftp)
 {
     const char *dir = sftpcompletion_get_remote_path(sftp->completion);
+    const char *line_dir = sftp_dup_utf8_to_line(sftp->line_codepage, dir, sftp->seat);
+    if (!line_dir) {
+        return NULL;
+    }
 
     CompletionReaddir *cmdreaddir = snew(CompletionReaddir);
     cmdreaddir->dirh = NULL;
@@ -58,7 +63,8 @@ static SftpCmd *completion_readdir_init(Sftp *sftp)
 
     sftpcmd_clear_request(&cmdreaddir->cmd);
     sftp_set_sending_backend(sftp);
-    sftpcmd_set_request(&cmdreaddir->cmd, SSH_FXP_OPENDIR, fxp_opendir_send(dir));
+    sftpcmd_set_request(&cmdreaddir->cmd, SSH_FXP_OPENDIR, fxp_opendir_send(line_dir));
+    sftp_dup_utf8_free(line_dir, dir);
     return &cmdreaddir->cmd;
 }
 
@@ -99,7 +105,7 @@ static bool completion_readdir_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp
             if (is_dir && (strcmp(fn->filename, ".") == 0 || strcmp(fn->filename, "..") == 0)) {
                 continue;
             }
-            cmdreaddir->names[cmdreaddir->nnames].name = fn->filename;
+            cmdreaddir->names[cmdreaddir->nnames].name = sftp_utf8_from_line(sftp->line_codepage, fn->filename);
             cmdreaddir->names[cmdreaddir->nnames].is_dir = is_dir;
             fn->filename = NULL;
             cmdreaddir->nnames++;

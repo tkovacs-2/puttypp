@@ -1,26 +1,36 @@
 #include "sftpcmd.h"
 #include "sftputil.h"
 #include "sftpfxp.h"
+#include "sftpunicode.h"
 
 typedef struct {
     SftpCmd cmd;
-    const char *pwd;
+    const char *line_pwd;
     bool get_realpath;
 } SftpCmdCd;
 
 static SftpCmd *sftpcmdcd_init(Sftp *sftp)
 {
-    SftpCmdCd *cmdcd = snew(SftpCmdCd);
+    const char *line_pwd;
+    bool get_realpath;
+
     if (sftp->args.argc < 2) {
-        cmdcd->pwd = dupstr(sftp->homedir);
-        cmdcd->get_realpath = false;
+        line_pwd = dupstr(sftp->line_homedir);
+        get_realpath = false;
     } else {
-        cmdcd->pwd = sftp_get_absolute_path(sftp->pwd, sftp->args.argv[1]);
-        cmdcd->get_realpath = true;
+        line_pwd = sftp_utf8_to_line(sftp->line_codepage, sftp_get_absolute_path(sftp->pwd, sftp->args.argv[1]), sftp->seat);
+        if (!line_pwd) {
+            return NULL;
+        }
+        get_realpath = true;
     }
+
+    SftpCmdCd *cmdcd = snew(SftpCmdCd);
+    cmdcd->line_pwd = line_pwd;
+    cmdcd->get_realpath = get_realpath;
     sftpcmd_clear_request(&cmdcd->cmd);
     sftp_set_sending_backend(sftp);
-    sftpcmd_set_request(&cmdcd->cmd, SSH_FXP_OPENDIR, fxp_opendir_send(cmdcd->pwd));
+    sftpcmd_set_request(&cmdcd->cmd, SSH_FXP_OPENDIR, fxp_opendir_send(cmdcd->line_pwd));
     return &cmdcd->cmd;
 }
 
@@ -32,7 +42,7 @@ static bool sftpcmdcd_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *
         struct fxp_handle *dirh = fxp_opendir_recv(pktin, cmd->req);
         sftpcmd_clear_request(cmd);
         if (!dirh) {
-            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "cd: directory %s: %s", cmdcd->pwd, fxp_error());
+            sftp_line_printf(sftp, SEAT_OUTPUT_STDERR, cmdcd->line_pwd, "cd: directory %s: %s", utf8_arg, fxp_error());
             return false;
         }
         sftp_set_sending_backend(sftp);
@@ -43,20 +53,22 @@ static bool sftpcmdcd_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *
         sftpcmd_clear_request(cmd);
         if (cmdcd->get_realpath) {
             sftp_set_sending_backend(sftp);
-            sftpcmd_set_request(cmd, SSH_FXP_REALPATH, fxp_realpath_send(cmdcd->pwd));
+            sftpcmd_set_request(cmd, SSH_FXP_REALPATH, fxp_realpath_send(cmdcd->line_pwd));
             return true;
         }
     } else if (cmd->req_type == SSH_FXP_REALPATH) {
-      const char *pwd = fxp_realpath_recv(pktin, cmd->req);
-      sftpcmd_clear_request(cmd);
-      if (pwd) {
-          sfree((void *)cmdcd->pwd);
-          cmdcd->pwd = pwd;
-      }
+        const char *line_pwd = fxp_realpath_recv(pktin, cmd->req);
+        sftpcmd_clear_request(cmd);
+        if (line_pwd) {
+            sfree((void *)cmdcd->line_pwd);
+            cmdcd->line_pwd = line_pwd;
+        }
     }
-    sfree((void *)sftp->pwd);
-    sftp->pwd = cmdcd->pwd;
-    cmdcd->pwd = NULL;
+    sftp_dup_utf8_free(sftp->pwd, sftp->line_pwd);
+    sfree((void *)sftp->line_pwd);
+    sftp->line_pwd = cmdcd->line_pwd;
+    cmdcd->line_pwd = NULL;
+    sftp->pwd = sftp_dup_utf8_from_line(sftp->line_codepage, sftp->line_pwd);
     sftp_print_pwd(sftp->seat, sftp->pwd);
     return false;
 }
@@ -64,7 +76,7 @@ static bool sftpcmdcd_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *
 static void sftpcmdcd_free(SftpCmd *cmd)
 {
     SftpCmdCd *cmdcd = container_of(cmd, SftpCmdCd, cmd);
-    sfree((void *)cmdcd->pwd);
+    sfree((void *)cmdcd->line_pwd);
     sfree(cmdcd);
 }
 

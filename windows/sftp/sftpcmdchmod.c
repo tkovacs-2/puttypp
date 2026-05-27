@@ -2,6 +2,7 @@
 #include "sftputil.h"
 #include "sftpfxp.h"
 #include "sftpwcm.h"
+#include "sftpunicode.h"
 
 typedef struct SftpCmdChmod {
     SftpCmd cmd;
@@ -123,18 +124,19 @@ static SftpCmd *sftpcmdchmod_init(Sftp *sftp)
         }
     }
 
+    SftpWildcardArgs *args = sftpwcm_args_create(sftp, 2, sftp->args.argc, false);
+    if (args == NULL) {
+        return NULL;
+    }
+
     SftpCmdChmod *cmdchmod = snew(SftpCmdChmod);
     cmdchmod->attrs_clr = attrs_clr;
     cmdchmod->attrs_xor = attrs_xor;
-    sftpwcm_iterator_init(&cmdchmod->it, send_stat);
-    cmdchmod->it.current_arg = 1;
-    cmdchmod->it.end_arg = sftp->args.argc;
+    sftpwcm_iterator_init(&cmdchmod->it, args, send_stat);
 
     sftpcmd_clear_request(&cmdchmod->cmd);
-    if (!sftpwcm_iterator_next(&cmdchmod->it, sftp, &cmdchmod->cmd)) {
-        sfree(cmdchmod);
-        return NULL;
-    }
+    bool next = sftpwcm_iterator_next(&cmdchmod->it, sftp, &cmdchmod->cmd);
+    assert(next);
     return &cmdchmod->cmd;
 }
 
@@ -148,7 +150,7 @@ static bool sftpcmdchmod_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packe
         sftpcmd_clear_request(cmd);
 
         if (!result || !(attrs.flags & SSH_FILEXFER_ATTR_PERMISSIONS)) {
-            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "get attrs for %s: %s", cmdchmod->fname,
+            sftp_line_printf(sftp, SEAT_OUTPUT_STDERR, cmdchmod->fname, "get attrs for %s: %s", utf8_arg,
                    result ? "file permissions not provided" : fxp_error());
             return false;
         }
@@ -171,11 +173,11 @@ static bool sftpcmdchmod_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packe
         sftpcmd_clear_request(cmd);
 
         if (!result) {
-            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "set attrs for %s: %s", cmdchmod->fname, fxp_error());
+            sftp_line_printf(sftp, SEAT_OUTPUT_STDERR, cmdchmod->fname, "set attrs for %s: %s", utf8_arg, fxp_error());
             return false;
         }
 
-        sftp_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "%s: %04o -> %04o", cmdchmod->fname, cmdchmod->oldperms, cmdchmod->newperms);
+        sftp_line_printf(sftp, SEAT_OUTPUT_STDOUT, cmdchmod->fname, "%s: %04o -> %04o", utf8_arg, cmdchmod->oldperms, cmdchmod->newperms);
         return sftpwcm_iterator_next(&cmdchmod->it, sftp, cmd);
     }
     return sftpwcm_iterator_pktin(&cmdchmod->it, sftp, cmd, pktin);

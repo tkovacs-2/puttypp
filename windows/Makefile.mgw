@@ -140,7 +140,6 @@ SOURCES := ../putty-0.81/windows/utils/agent_mutex_name.c \
             ../putty-0.81/windows/utils/split_into_argv.c \
             ../putty-0.81/windows/utils/version.c \
             ../putty-0.81/windows/utils/win_strerror.c \
-            ../putty-0.81/windows/unicode.c \
             ../putty-0.81/utils/antispoof.c \
             ../putty-0.81/utils/backend_socket_log.c \
             ../putty-0.81/utils/base64_decode_atom.c \
@@ -167,7 +166,6 @@ SOURCES := ../putty-0.81/windows/utils/agent_mutex_name.c \
             ../putty-0.81/utils/dupprintf.c \
             ../putty-0.81/utils/dupstr.c \
             ../putty-0.81/utils/dup_mb_to_wc.c \
-            ../putty-0.81/utils/dup_wc_to_mb.c \
             ../putty-0.81/utils/encode_utf8.c \
             ../putty-0.81/utils/encode_wide_string_as_utf8.c \
             ../putty-0.81/utils/fgetline.c \
@@ -359,6 +357,7 @@ SOURCES := ../putty-0.81/windows/utils/agent_mutex_name.c \
             ../windows/tabbar.c \
             ../windows/window.c \
             ../windows/conpty.c \
+            ../windows/unicode_defchr.c \
             ../windows/sftp/sftpbe.c \
             ../windows/sftp/sftpfxp.c \
             ../windows/sftp/sftpcli.c \
@@ -379,6 +378,7 @@ SOURCES := ../putty-0.81/windows/utils/agent_mutex_name.c \
             ../windows/sftp/sftpcompletion_readdir.c \
             ../windows/sftp/sftpargs.c \
             ../windows/sftp/sftputil.c \
+            ../windows/sftp/sftpunicode.c \
             ../windows/sftp/linenoise/linenoise.c \
             ../windows/sftp/psftp.c \
             ../putty-0.81/ssh/sftpcommon.c \

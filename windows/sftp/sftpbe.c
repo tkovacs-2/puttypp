@@ -4,6 +4,7 @@
 #include "sftputil.h"
 #include "sftpfxp.h"
 #include "sftpcompletion.h"
+#include "sftpunicode.h"
 
 extern const SftpCmdVtable sftpcompletion_readdir_vt;
 extern const SftpCmdVtable sftpinit_vt;
@@ -86,11 +87,31 @@ bool receive_pkt(Sftp *sftp, struct sftp_packet **pkt) {
     return true;
 }
 
+static void reconfig_line_codepage(Sftp *sftp) {
+    assert(sftp->reconfig_line_codepage_name);
+
+    int line_codepage = sftp_decode_codepage(sftp->reconfig_line_codepage_name, sftp->seat);
+    if (sftp->line_codepage_name) {
+        sfree((void *)sftp->line_codepage_name);
+    }
+    sftp->line_codepage_name = sftp->reconfig_line_codepage_name;
+    sftp->reconfig_line_codepage_name = NULL;
+    if (sftp->line_codepage == line_codepage) {
+        return;
+    }
+    sftp->line_codepage = line_codepage;
+    sftp_dup_utf8_free(sftp->pwd, sftp->line_pwd);
+    sftp->pwd = sftp_dup_utf8_from_line(line_codepage, sftp->line_pwd);
+}
+
 static void clear_command(Sftp *sftp) {
     bool is_completion = sftp->cmd->vt == &sftpcompletion_readdir_vt;
     sftpcmd_free(sftp->cmd);
     sftp->cmd = NULL;
     sftp_free_pending_requests(sftp);
+    if (sftp->reconfig_line_codepage_name) {
+        reconfig_line_codepage(sftp);
+    }
     if (!is_completion) {
         sftpargs_free(&sftp->args);
         sftpcli_start(sftp->cli, sftp->width, sftp->lpwd, sftp->pwd);
@@ -287,14 +308,29 @@ static void sftpbe_free(Backend *be)
     sftp_uninit_requests(sftp);
     sftpcompletion_free(sftp->completion);
     sftpcli_free(sftp->cli);
-    sfree((void *)sftp->homedir);
-    sfree((void *)sftp->pwd);
+    sftp_dup_utf8_free(sftp->pwd, sftp->line_pwd);
     sfree((void *)sftp->lpwd);
+    sfree((void *)sftp->line_homedir);
+    sfree((void *)sftp->line_pwd);
+    sfree((void *)sftp->line_codepage_name);
+    sfree((void *)sftp->reconfig_line_codepage_name);
     sfree(sftp);
 }
 
 static void sftpbe_reconfig(Backend *be, Conf *conf)
 {
+    Sftp *sftp = container_of(be, Sftp, backend);
+    const char *line_codepage_name = conf_get_str(conf, CONF_line_codepage);
+    if (sftp->line_codepage_name && strcmp(line_codepage_name, sftp->line_codepage_name) == 0) {
+        return;
+    }
+    if (sftp->reconfig_line_codepage_name) {
+        sfree((void *)sftp->reconfig_line_codepage_name);
+    }
+    sftp->reconfig_line_codepage_name = dupstr(line_codepage_name);
+    if (!sftp->cmd) {
+        reconfig_line_codepage(sftp);
+    }
 }
 
 static void sftpbe_send(Backend *be, const char *buf, size_t len)
@@ -340,7 +376,11 @@ static void sftpbe_send(Backend *be, const char *buf, size_t len)
         const SftpCmdVtable *vt = sftpcompletion_start_completion(sftp->completion);
         if (vt != NULL) {
             sftp->cmd = sftpcmd_init(vt, sftp);
-            sftp->cmd->vt = vt;
+            if (sftp->cmd) {
+                sftp->cmd->vt = vt;
+            } else {
+                sftpcli_refresh(sftp->cli);
+            }
         }
         return;
     } else if (state == SFTPCLISTATE_COMPLETION_AGAIN) {
@@ -381,7 +421,7 @@ static void sftpbe_size(Backend *be, int width, int height)
     if (sftpcompletion_is_paging(sftp->completion)) {
         sftpcompletion_cancel_paging(sftp->completion);
     }
-    if (sftp->homedir && (!sftp->cmd || sftp->cmd->vt == &sftpcompletion_readdir_vt)) {
+    if (sftp->line_homedir && (!sftp->cmd || sftp->cmd->vt == &sftpcompletion_readdir_vt)) {
         sftpcli_change_columns(sftp->cli, width);
     }
 }
@@ -404,7 +444,7 @@ static bool sftpbe_connected(Backend *be)
 static bool sftpbe_sendok(Backend *be)
 {
     Sftp *sftp = container_of(be, Sftp, backend);
-    return sftp->homedir;
+    return sftp->line_homedir;
 }
 
 static void sftpbe_unthrottle(Backend *be, size_t backlog)

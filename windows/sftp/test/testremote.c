@@ -14,7 +14,7 @@ struct TestRemoteFile {
     size_t create_size;
 };
 
-static void unlink_file(TestRemoteFile *file)
+static void unlink_file(TestRemote *tr, TestRemoteFile *file)
 {
     TestRemoteFile *parent = file->parent;
     if (!parent) {
@@ -36,13 +36,15 @@ static void unlink_file(TestRemoteFile *file)
     if (parent->readdir_current > i) {
         parent->readdir_current--;
     }
+    tr->is_dirty = true;
 }
 
-static void link_file(TestRemoteFile *parent, TestRemoteFile *file)
+static void link_file(TestRemote *tr, TestRemoteFile *parent, TestRemoteFile *file)
 {
     sgrowarray(parent->dir_content, parent->capacity, parent->size);
     parent->dir_content[parent->size++] = file;
     file->parent = parent;
+    tr->is_dirty = true;
 }
 
 static void free_file(TestRemoteFile *file);
@@ -85,7 +87,7 @@ static bool cmp(const char *begin, const char *end, const char *s)
     return (begin == end && *s == 0);
 }
 
-static TestRemoteFile *find_file_generic(TestRemoteFile *parent, const char *name, size_t length, bool create)
+static TestRemoteFile *find_file_generic(TestRemote *tr, TestRemoteFile *parent, const char *name, size_t length, bool create)
 {
     int begin = 0;
     while (begin < length && name[begin]) {
@@ -108,7 +110,7 @@ static TestRemoteFile *find_file_generic(TestRemoteFile *parent, const char *nam
             if (parent->is_dir) {
                 for (size_t i=0; i<parent->size; i++) {
                     if (cmp(&name[begin], &name[end], parent->dir_content[i]->name)) {
-                        return find_file_generic(parent->dir_content[i], &name[end], length-end, create);
+                        return find_file_generic(tr, parent->dir_content[i], &name[end], length-end, create);
                     }
                 }
             }
@@ -130,21 +132,21 @@ static TestRemoteFile *find_file_generic(TestRemoteFile *parent, const char *nam
             file->capacity = 0;
             memset(&file->attrs, 0, sizeof(struct fxp_attrs));
             PUT_PERMISSIONS(file->attrs, 0644);
-            link_file(parent, file);
-            return find_file_generic(file, &name[end], length-end, true);
+            link_file(tr, parent, file);
+            return find_file_generic(tr, file, &name[end], length-end, true);
         }
     }
     return parent;
 }
 
-static TestRemoteFile *find_file_ptrlen(TestRemoteFile *parent, ptrlen name, bool create)
+static TestRemoteFile *find_file_ptrlen(TestRemote *tr, TestRemoteFile *parent, ptrlen name, bool create)
 {
-    return find_file_generic(parent, name.ptr, name.len, create);
+    return find_file_generic(tr, parent, name.ptr, name.len, create);
 }
 
-static TestRemoteFile *find_file(TestRemoteFile *parent, const char *name, bool create)
+static TestRemoteFile *find_file(TestRemote *tr, TestRemoteFile *parent, const char *name, bool create)
 {
-    return find_file_generic(parent, name, INT_MAX, create);
+    return find_file_generic(tr, parent, name, INT_MAX, create);
 }
 
 static TestRemoteFile *get_find_parent(TestRemote *tr, const char *name)
@@ -168,11 +170,12 @@ static struct fxp_attrs get_attrs(TestRemoteFile *file)
     return attrs;
 }
 
-static void set_attrs(TestRemoteFile *file, struct fxp_attrs attrs)
+static void set_attrs(TestRemote *tr, TestRemoteFile *file, struct fxp_attrs attrs)
 {
     if (attrs.flags&SSH_FILEXFER_ATTR_PERMISSIONS) {
         PUT_PERMISSIONS(file->attrs, attrs.permissions);
     }
+    tr->is_dirty = true;
 }
 
 const struct SftpServerVtable srv_vt;
@@ -191,10 +194,11 @@ void testremote_init(TestRemote *tr)
     tr->root->capacity = 0;
     memset(&tr->root->attrs, 0, sizeof(struct fxp_attrs));
     PUT_PERMISSIONS(tr->root->attrs, 0755);
-    tr->home = find_file(tr->root, "/sftp", true);
+    tr->home = find_file(tr, tr->root, "/sftp", true);
     tr->home->size = 0;
     tr->home->is_dir = true;
     PUT_PERMISSIONS(tr->home->attrs, 0755);
+    tr->is_dirty = false;
 }
 
 void testremote_uninit(TestRemote *tr)
@@ -205,7 +209,7 @@ void testremote_uninit(TestRemote *tr)
 
 void testremote_add_file(TestRemote *tr, const char *name, size_t size)
 {
-    TestRemoteFile *file = find_file(get_find_parent(tr, name), name, true);
+    TestRemoteFile *file = find_file(tr, get_find_parent(tr, name), name, true);
     if (file->is_dir) {
         free_dir_content(file);
         file->dir_content = NULL;
@@ -219,7 +223,7 @@ void testremote_add_file(TestRemote *tr, const char *name, size_t size)
 
 void testremote_add_dir(TestRemote *tr, const char *name)
 {
-    TestRemoteFile *file = find_file(get_find_parent(tr, name), name, true);
+    TestRemoteFile *file = find_file(tr, get_find_parent(tr, name), name, true);
     if (!file->is_dir) {
         file->size = 0;
         file->is_dir = true;
@@ -229,7 +233,7 @@ void testremote_add_dir(TestRemote *tr, const char *name)
 
 bool testremote_check_file(TestRemote *tr, const char *name)
 {
-    TestRemoteFile *file = find_file(get_find_parent(tr, name), name, false);
+    TestRemoteFile *file = find_file(tr, get_find_parent(tr, name), name, false);
     if (!file || file->is_dir) {
         return false;
     }
@@ -238,7 +242,7 @@ bool testremote_check_file(TestRemote *tr, const char *name)
 
 bool testremote_check_dir(TestRemote *tr, const char *name)
 {
-    TestRemoteFile *file = find_file(get_find_parent(tr, name), name, false);
+    TestRemoteFile *file = find_file(tr, get_find_parent(tr, name), name, false);
     if (!file || !file->is_dir) {
         return false;
     }
@@ -247,7 +251,7 @@ bool testremote_check_dir(TestRemote *tr, const char *name)
 
 void testremote_set_permissions(TestRemote *tr, const char *name, unsigned long permissions)
 {
-    TestRemoteFile *file = find_file(get_find_parent(tr, name), name, false);
+    TestRemoteFile *file = find_file(tr, get_find_parent(tr, name), name, false);
     if (file) {
         PUT_PERMISSIONS(file->attrs, permissions);
     }
@@ -255,7 +259,7 @@ void testremote_set_permissions(TestRemote *tr, const char *name, unsigned long 
 
 unsigned long testremote_check_permissions(TestRemote *tr, const char *name)
 {
-    TestRemoteFile *file = find_file(get_find_parent(tr, name), name, false);
+    TestRemoteFile *file = find_file(tr, get_find_parent(tr, name), name, false);
     if (!file) {
         return 0;
     }
@@ -264,7 +268,7 @@ unsigned long testremote_check_permissions(TestRemote *tr, const char *name)
 
 size_t testremote_check_size(TestRemote *tr, const char *name)
 {
-    TestRemoteFile *file = find_file(get_find_parent(tr, name), name, false);
+    TestRemoteFile *file = find_file(tr, get_find_parent(tr, name), name, false);
     if (!file || file->is_dir) {
         return 0;
     }
@@ -273,7 +277,7 @@ size_t testremote_check_size(TestRemote *tr, const char *name)
 
 size_t testremote_check_create_size(TestRemote *tr, const char *name)
 {
-    TestRemoteFile *file = find_file(get_find_parent(tr, name), name, false);
+    TestRemoteFile *file = find_file(tr, get_find_parent(tr, name), name, false);
     if (!file || file->is_dir) {
         return 0;
     }
@@ -329,10 +333,20 @@ void testremote_connection_fatal(TestRemote *tr)
     seat_connection_fatal(tr->client_seat, "test connection fatal");
 }
 
+bool testremote_is_dirty(TestRemote *tr)
+{
+    return tr->is_dirty;
+}
+
+void testremote_set_clean(TestRemote *tr)
+{
+    tr->is_dirty = false;
+}
+
 static void srv_realpath(SftpServer *srv, SftpReplyBuilder *reply, ptrlen path)
 {
     TestRemote *tr = container_of(srv, TestRemote, srv);
-    TestRemoteFile *file = find_file_ptrlen(get_find_parent_ptrlen(tr, path), path, false);
+    TestRemoteFile *file = find_file_ptrlen(tr, get_find_parent_ptrlen(tr, path), path, false);
     if (!file) {
         fxp_reply_error(reply, SSH_FX_NO_SUCH_FILE, "no such file or directory");
         return;
@@ -369,7 +383,7 @@ static void srv_realpath(SftpServer *srv, SftpReplyBuilder *reply, ptrlen path)
 static void srv_open(SftpServer *srv, SftpReplyBuilder *reply, ptrlen path, unsigned flags, struct fxp_attrs attrs)
 {
     TestRemote *tr = container_of(srv, TestRemote, srv);
-    TestRemoteFile *file = find_file_ptrlen(get_find_parent_ptrlen(tr, path), path, false);
+    TestRemoteFile *file = find_file_ptrlen(tr, get_find_parent_ptrlen(tr, path), path, false);
     if (file) {
         if (file->is_dir) {
             fxp_reply_error(reply, SSH_FX_FAILURE, "path is a directory");
@@ -392,13 +406,13 @@ static void srv_open(SftpServer *srv, SftpReplyBuilder *reply, ptrlen path, unsi
                 return;
             }
             ptrlen parent_name = {name, begin};
-            TestRemoteFile *parent = find_file_ptrlen(get_find_parent(tr, name), parent_name, false);
+            TestRemoteFile *parent = find_file_ptrlen(tr, get_find_parent(tr, name), parent_name, false);
             if (!parent || !parent->is_dir) {
                 fxp_reply_error(reply, SSH_FX_NO_SUCH_FILE, "no such file");
                 return;
             }
             ptrlen file_name = {name+begin, end-begin};
-            file = find_file_ptrlen(parent, file_name, true);
+            file = find_file_ptrlen(tr, parent, file_name, true);
         }
     }
     if (!file) {
@@ -412,7 +426,7 @@ static void srv_open(SftpServer *srv, SftpReplyBuilder *reply, ptrlen path, unsi
 static void srv_opendir(SftpServer *srv, SftpReplyBuilder *reply, ptrlen path)
 {
     TestRemote *tr = container_of(srv, TestRemote, srv);
-    TestRemoteFile *file = find_file_ptrlen(get_find_parent_ptrlen(tr, path), path, false);
+    TestRemoteFile *file = find_file_ptrlen(tr, get_find_parent_ptrlen(tr, path), path, false);
     if (!file || !file->is_dir) {
         fxp_reply_error(reply, SSH_FX_NO_SUCH_FILE, "no such directory");
         return;
@@ -444,18 +458,18 @@ static void srv_mkdir(SftpServer *srv, SftpReplyBuilder *reply, ptrlen path, str
         begin--;
     }
     ptrlen parent_name = {name, begin};
-    TestRemoteFile *parent = find_file_ptrlen(get_find_parent(tr, name), parent_name, false);
+    TestRemoteFile *parent = find_file_ptrlen(tr, get_find_parent(tr, name), parent_name, false);
     if (!parent || !parent->is_dir) {
         fxp_reply_error(reply, SSH_FX_FAILURE, "parent is not a directory");
         return;
     }
     ptrlen file_name = {name+begin, path.len-begin};
-    TestRemoteFile *file = find_file_ptrlen(parent, file_name, false);
+    TestRemoteFile *file = find_file_ptrlen(tr, parent, file_name, false);
     if (file) {
         fxp_reply_error(reply, SSH_FX_FAILURE, "path already exists");
         return;
     }
-    file = find_file_ptrlen(parent, file_name, true);
+    file = find_file_ptrlen(tr, parent, file_name, true);
     file->is_dir = true;
     fxp_reply_ok(reply);
 }
@@ -463,12 +477,12 @@ static void srv_mkdir(SftpServer *srv, SftpReplyBuilder *reply, ptrlen path, str
 static void srv_rmdir(SftpServer *srv, SftpReplyBuilder *reply, ptrlen path)
 {
     TestRemote *tr = container_of(srv, TestRemote, srv);
-    TestRemoteFile *file = find_file_ptrlen(get_find_parent_ptrlen(tr, path), path, false);
+    TestRemoteFile *file = find_file_ptrlen(tr, get_find_parent_ptrlen(tr, path), path, false);
     if (!file || !file->is_dir || file->size != 0) {
         fxp_reply_error(reply, SSH_FX_FAILURE, "path doesn't exist, not a directory or not empty");
         return;
     }
-    unlink_file(file);
+    unlink_file(tr, file);
     free_file(file);
     fxp_reply_ok(reply);
 }
@@ -476,12 +490,12 @@ static void srv_rmdir(SftpServer *srv, SftpReplyBuilder *reply, ptrlen path)
 static void srv_remove(SftpServer *srv, SftpReplyBuilder *reply, ptrlen path)
 {
     TestRemote *tr = container_of(srv, TestRemote, srv);
-    TestRemoteFile *file = find_file_ptrlen(get_find_parent_ptrlen(tr, path), path, false);
+    TestRemoteFile *file = find_file_ptrlen(tr, get_find_parent_ptrlen(tr, path), path, false);
     if (!file || file->is_dir) {
         fxp_reply_error(reply, SSH_FX_FAILURE, "path doesn't exist or directory");
         return;
     }
-    unlink_file(file);
+    unlink_file(tr, file);
     free_file(file);
     fxp_reply_ok(reply);
 }
@@ -489,7 +503,7 @@ static void srv_remove(SftpServer *srv, SftpReplyBuilder *reply, ptrlen path)
 static void srv_rename(SftpServer *srv, SftpReplyBuilder *reply, ptrlen srcpath, ptrlen dstpath)
 {
     TestRemote *tr = container_of(srv, TestRemote, srv);
-    TestRemoteFile *srcfile = find_file_ptrlen(get_find_parent_ptrlen(tr, srcpath), srcpath, false);
+    TestRemoteFile *srcfile = find_file_ptrlen(tr, get_find_parent_ptrlen(tr, srcpath), srcpath, false);
     if (!srcfile) {
         fxp_reply_error(reply, SSH_FX_NO_SUCH_FILE, "no such file or directory");
         return;
@@ -505,19 +519,19 @@ static void srv_rename(SftpServer *srv, SftpReplyBuilder *reply, ptrlen srcpath,
         end--;
     }
     ptrlen parent_name = {name, end};
-    TestRemoteFile *parent = find_file_ptrlen(get_find_parent(tr, name), parent_name, false);
+    TestRemoteFile *parent = find_file_ptrlen(tr, get_find_parent(tr, name), parent_name, false);
     if (!parent || !parent->is_dir) {
         fxp_reply_error(reply, SSH_FX_FAILURE, "parent is not a directory");
         return;
     }
     ptrlen file_name = {name+end, dstpath.len-end};
-    TestRemoteFile *file = find_file_ptrlen(parent, file_name, false);
+    TestRemoteFile *file = find_file_ptrlen(tr, parent, file_name, false);
     if (file) {
         fxp_reply_error(reply, SSH_FX_FAILURE, "destination already exists");
         return;
     }
-    unlink_file(srcfile);
-    link_file(parent, srcfile);
+    unlink_file(tr, srcfile);
+    link_file(tr, parent, srcfile);
     sfree((void *)srcfile->name);
     srcfile->name = dup(file_name.ptr, file_name.ptr+file_name.len);
     fxp_reply_ok(reply);
@@ -526,7 +540,7 @@ static void srv_rename(SftpServer *srv, SftpReplyBuilder *reply, ptrlen srcpath,
 static void srv_stat(SftpServer *srv, SftpReplyBuilder *reply, ptrlen path, bool follow_symlinks)
 {
     TestRemote *tr = container_of(srv, TestRemote, srv);
-    TestRemoteFile *file = find_file_ptrlen(get_find_parent_ptrlen(tr, path), path, false);
+    TestRemoteFile *file = find_file_ptrlen(tr, get_find_parent_ptrlen(tr, path), path, false);
     if (!file) {
         fxp_reply_error(reply, SSH_FX_NO_SUCH_FILE, "no such file or directory");
         return;
@@ -543,19 +557,20 @@ static void srv_fstat(SftpServer *srv, SftpReplyBuilder *reply, ptrlen handle)
 static void srv_setstat(SftpServer *srv, SftpReplyBuilder *reply, ptrlen path, struct fxp_attrs attrs)
 {
     TestRemote *tr = container_of(srv, TestRemote, srv);
-    TestRemoteFile *file = find_file_ptrlen(get_find_parent_ptrlen(tr, path), path, false);
+    TestRemoteFile *file = find_file_ptrlen(tr, get_find_parent_ptrlen(tr, path), path, false);
     if (!file) {
         fxp_reply_error(reply, SSH_FX_NO_SUCH_FILE, "no such file or directory");
         return;
     }
-    set_attrs(file, attrs);
+    set_attrs(tr, file, attrs);
     fxp_reply_ok(reply);
 }
 
 static void srv_fsetstat(SftpServer *srv, SftpReplyBuilder *reply, ptrlen handle, struct fxp_attrs attrs)
 {
+    TestRemote *tr = container_of(srv, TestRemote, srv);
     TestRemoteFile *file = *((TestRemoteFile **)handle.ptr);
-    set_attrs(file, attrs);
+    set_attrs(tr, file, attrs);
     fxp_reply_ok(reply);
 }
 

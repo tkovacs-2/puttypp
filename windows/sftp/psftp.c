@@ -2,6 +2,33 @@
 #include "psftp.h"
 #include <shlwapi.h>
 
+static wchar_t *utf8_to_wc(const char *utf8)
+{
+    return dup_mb_to_wc(CP_UTF8, 0, utf8);
+}
+
+static char *utf8_from_wc_c(const wchar_t *wc, int len)
+{
+    size_t outsize = len+MB_LEN_MAX+1;
+    char *out = snewn(outsize, char);
+
+    while (true) {
+        size_t outlen = wc_to_mb(CP_UTF8, 0, wc, len, out, outsize, NULL);
+        /* We can only be sure we've consumed the whole input if the
+         * output is not within a multibyte-character-length of the
+         * end of the buffer! */
+        if ((outlen > 0 || len == 0) && outlen < outsize && outsize - outlen > MB_LEN_MAX) {
+            out[outlen] = '\0';
+            return out;
+        }
+        sgrowarray(out, outsize, outsize);
+    }
+}
+
+static char *utf8_from_wc(const wchar_t *wc) {
+    return utf8_from_wc_c(wc, wcslen(wc));
+}
+
 /*
  * Set local current directory. Returns NULL on success, or else an
  * error message which must be freed after printing.
@@ -9,21 +36,23 @@
 char *psftp_lcd(char *dir)
 {
     char *ret = NULL;
+    wchar_t *wdir = utf8_to_wc(dir);
 
-    if (!SetCurrentDirectory(dir)) {
-        LPVOID message;
+    if (!SetCurrentDirectoryW(wdir)) {
+        wchar_t *message = NULL;
         int i;
-        FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER |
-                      FORMAT_MESSAGE_FROM_SYSTEM |
-                      FORMAT_MESSAGE_IGNORE_INSERTS,
-                      NULL, GetLastError(),
-                      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                      (LPTSTR)&message, 0, NULL);
-        i = strcspn((char *)message, "\n");
-        ret = dupprintf("%.*s", i, (LPCTSTR)message);
+        FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER |
+                       FORMAT_MESSAGE_FROM_SYSTEM |
+                       FORMAT_MESSAGE_IGNORE_INSERTS,
+                       NULL, GetLastError(),
+                       MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                       (LPWSTR)&message, 0, NULL);
+        i = wcscspn(message, L"\n");
+        ret = utf8_from_wc_c(message, i);
         LocalFree(message);
     }
 
+    sfree(wdir);
     return ret;
 }
 
@@ -33,11 +62,15 @@ char *psftp_lcd(char *dir)
  */
 char *psftp_getcwd(void)
 {
-    char *ret = snewn(256, char);
-    size_t len = GetCurrentDirectory(256, ret);
-    if (len > 256)
-        ret = sresize(ret, len, char);
-    GetCurrentDirectory(len, ret);
+    wchar_t *wret = snewn(256, wchar_t);
+    DWORD len = GetCurrentDirectoryW(256, wret);
+
+    if (len > 256) {
+        wret = sresize(wret, len, wchar_t);
+        len = GetCurrentDirectoryW(len, wret);
+    }
+    char *ret = utf8_from_wc_c(wret, len);
+    sfree(wret);
     return ret;
 }
 
@@ -70,9 +103,11 @@ RFile *open_existing_file(const char *name, uint64_t *size,
 {
     HANDLE h;
     RFile *ret;
+    wchar_t *wname = utf8_to_wc(name);
 
-    h = CreateFile(name, GENERIC_READ, FILE_SHARE_READ, NULL,
-                   OPEN_EXISTING, 0, 0);
+    h = CreateFileW(wname, GENERIC_READ, FILE_SHARE_READ, NULL,
+                    OPEN_EXISTING, 0, 0);
+    sfree(wname);
     if (h == INVALID_HANDLE_VALUE)
         return NULL;
 
@@ -123,9 +158,11 @@ WFile *open_new_file(const char *name, long perms)
 {
     HANDLE h;
     WFile *ret;
+    wchar_t *wname = utf8_to_wc(name);
 
-    h = CreateFile(name, GENERIC_WRITE, 0, NULL,
-                   CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+    h = CreateFileW(wname, GENERIC_WRITE, 0, NULL,
+                    CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+    sfree(wname);
     if (h == INVALID_HANDLE_VALUE)
         return NULL;
 
@@ -139,9 +176,11 @@ WFile *open_existing_wfile(const char *name, uint64_t *size)
 {
     HANDLE h;
     WFile *ret;
+    wchar_t *wname = utf8_to_wc(name);
 
-    h = CreateFile(name, GENERIC_WRITE, FILE_SHARE_READ, NULL,
-                   OPEN_EXISTING, 0, 0);
+    h = CreateFileW(wname, GENERIC_WRITE, FILE_SHARE_READ, NULL,
+                    OPEN_EXISTING, 0, 0);
+    sfree(wname);
     if (h == INVALID_HANDLE_VALUE)
         return NULL;
 
@@ -200,12 +239,10 @@ int seek_file(WFile *f, uint64_t offset, int whence)
         return -1;
     }
 
-    {
-        LONG lo = offset & 0xFFFFFFFFU, hi = offset >> 32;
-        SetFilePointer(f->h, lo, &hi, movemethod);
-    }
+    LONG lo = offset & 0xFFFFFFFFU, hi = offset >> 32;
+    DWORD r = SetFilePointer(f->h, lo, &hi, movemethod);
 
-    if (GetLastError() != NO_ERROR)
+    if (r == INVALID_SET_FILE_POINTER && GetLastError() != NO_ERROR)
         return -1;
     else
         return 0;
@@ -222,7 +259,10 @@ uint64_t get_file_posn(WFile *f)
 int file_type(const char *name)
 {
     DWORD attr;
-    attr = GetFileAttributes(name);
+    wchar_t *wname = utf8_to_wc(name);
+
+    attr = GetFileAttributesW(wname);
+    sfree(wname);
     /* We know of no `weird' files under Windows. */
     if (attr == (DWORD)-1)
         return FILE_TYPE_NONEXISTENT;
@@ -240,14 +280,18 @@ struct DirHandle {
 DirHandle *open_directory(const char *name, const char **errmsg)
 {
     HANDLE h;
-    WIN32_FIND_DATA fdat;
+    WIN32_FIND_DATAW fdat;
     char *findfile;
+    wchar_t *wfindfile;
     DirHandle *ret;
 
     /* Enumerate files in dir `foo'. */
     findfile = dupcat(name, "/*");
-    h = FindFirstFile(findfile, &fdat);
+    wfindfile = utf8_to_wc(findfile);
+    h = FindFirstFileW(wfindfile, &fdat);
+    sfree(wfindfile);
     if (h == INVALID_HANDLE_VALUE) {
+        sfree(findfile);
         *errmsg = win_strerror(GetLastError());
         return NULL;
     }
@@ -255,7 +299,7 @@ DirHandle *open_directory(const char *name, const char **errmsg)
 
     ret = snew(DirHandle);
     ret->h = h;
-    ret->name = dupstr(fdat.cFileName);
+    ret->name = utf8_from_wc(fdat.cFileName);
     return ret;
 }
 
@@ -264,11 +308,11 @@ char *read_filename(DirHandle *dir)
     do {
 
         if (!dir->name) {
-            WIN32_FIND_DATA fdat;
-            if (!FindNextFile(dir->h, &fdat))
+            WIN32_FIND_DATAW fdat;
+            if (!FindNextFileW(dir->h, &fdat))
                 return NULL;
             else
-                dir->name = dupstr(fdat.cFileName);
+                dir->name = utf8_from_wc(fdat.cFileName);
         }
 
         assert(dir->name);
@@ -300,14 +344,18 @@ void close_directory(DirHandle *dir)
 int test_wildcard(const char *name, bool cmdline)
 {
     HANDLE fh;
-    WIN32_FIND_DATA fdat;
+    WIN32_FIND_DATAW fdat;
+    wchar_t *wname = utf8_to_wc(name);
 
     /* First see if the exact name exists. */
-    if (GetFileAttributes(name) != (DWORD)-1)
+    if (GetFileAttributesW(wname) != (DWORD)-1) {
+        sfree(wname);
         return WCTYPE_FILENAME;
+    }
 
     /* Otherwise see if a wildcard match finds anything. */
-    fh = FindFirstFile(name, &fdat);
+    fh = FindFirstFileW(wname, &fdat);
+    sfree(wname);
     if (fh == INVALID_HANDLE_VALUE)
         return WCTYPE_NONEXISTENT;
 
@@ -348,11 +396,13 @@ char *stripslashes(const char *str, bool local)
 WildcardMatcher *begin_wildcard_matching(const char *name)
 {
     HANDLE h;
-    WIN32_FIND_DATA fdat;
+    WIN32_FIND_DATAW fdat;
     WildcardMatcher *ret;
     char *last;
+    wchar_t *wname = utf8_to_wc(name);
 
-    h = FindFirstFile(name, &fdat);
+    h = FindFirstFileW(wname, &fdat);
+    sfree(wname);
     if (h == INVALID_HANDLE_VALUE)
         return NULL;
 
@@ -361,12 +411,15 @@ WildcardMatcher *begin_wildcard_matching(const char *name)
     ret->srcpath = dupstr(name);
     last = stripslashes(ret->srcpath, true);
     *last = '\0';
-    if (fdat.cFileName[0] == '.' &&
-        (fdat.cFileName[1] == '\0' ||
-         (fdat.cFileName[1] == '.' && fdat.cFileName[2] == '\0')))
+    if (fdat.cFileName[0] == L'.' &&
+        (fdat.cFileName[1] == L'\0' ||
+         (fdat.cFileName[1] == L'.' && fdat.cFileName[2] == L'\0')))
         ret->name = NULL;
-    else
-        ret->name = dupcat(ret->srcpath, fdat.cFileName);
+    else {
+        char *fname = utf8_from_wc(fdat.cFileName);
+        ret->name = dupcat(ret->srcpath, fname);
+        sfree(fname);
+    }
 
     return ret;
 }
@@ -374,17 +427,20 @@ WildcardMatcher *begin_wildcard_matching(const char *name)
 char *wildcard_get_filename(WildcardMatcher *dir)
 {
     while (!dir->name) {
-        WIN32_FIND_DATA fdat;
+        WIN32_FIND_DATAW fdat;
 
-        if (!FindNextFile(dir->h, &fdat))
+        if (!FindNextFileW(dir->h, &fdat))
             return NULL;
 
-        if (fdat.cFileName[0] == '.' &&
-            (fdat.cFileName[1] == '\0' ||
-             (fdat.cFileName[1] == '.' && fdat.cFileName[2] == '\0')))
+        if (fdat.cFileName[0] == L'.' &&
+            (fdat.cFileName[1] == L'\0' ||
+             (fdat.cFileName[1] == L'.' && fdat.cFileName[2] == L'\0')))
             dir->name = NULL;
-        else
-            dir->name = dupcat(dir->srcpath, fdat.cFileName);
+        else {
+            char *fname = utf8_from_wc(fdat.cFileName);
+            dir->name = dupcat(dir->srcpath, fname);
+            sfree(fname);
+        }
     }
 
     if (dir->name) {
@@ -417,7 +473,10 @@ bool vet_filename(const char *name)
 
 bool create_directory(const char *name)
 {
-    return CreateDirectory(name, NULL) != 0;
+    wchar_t *wname = utf8_to_wc(name);
+    bool ret = CreateDirectoryW(wname, NULL) != 0;
+    sfree(wname);
+    return ret;
 }
 
 char *dir_file_cat(const char *dir, const char *file)
@@ -431,28 +490,39 @@ char *dir_file_cat(const char *dir, const char *file)
 
 const char *get_absolute_path(const char *pwd, const char *name)
 {
-    if (!PathIsRelative(name)) {
-        return dupstr(name);
+    wchar_t *wname = utf8_to_wc(name);
+
+    if (!PathIsRelativeW(wname)) {
+        char *ret = dupstr(name);
+        sfree(wname);
+        return ret;
     }
+    sfree(wname);
 
     char *t = dupcat(pwd, "\\", name);
-    char result[MAX_PATH];
-    if (PathCanonicalize(result, t))
-    {
+    wchar_t *wt = utf8_to_wc(t);
+    wchar_t result[MAX_PATH];
+    if (PathCanonicalizeW(result, wt)) {
+        sfree(wt);
         sfree(t);
-        return dupstr(result);
+        return utf8_from_wc(result);
     }
+    sfree(wt);
     return t;
 }
 
 void delete_file(const char *name)
 {
-    DeleteFile(name);
+    wchar_t *wname = utf8_to_wc(name);
+    DeleteFileW(wname);
+    sfree(wname);
 }
 
 void delete_directory(const char *name)
 {
-    RemoveDirectory(name);
+    wchar_t *wname = utf8_to_wc(name);
+    RemoveDirectoryW(wname);
+    sfree(wname);
 }
 
 const char *truncate_path(const char *name)

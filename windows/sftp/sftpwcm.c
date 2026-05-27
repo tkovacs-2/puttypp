@@ -2,68 +2,54 @@
 #include "sftpcmd.h"
 #include "sftputil.h"
 #include "sftpfxp.h"
+#include "sftpunicode.h"
 #include "psftp.h"
+
+typedef struct SftpWildcardArg {
+    const char *name; //line codepage
+    const char *wildcard; //line codepage
+} SftpWildcardArg;
+
+typedef struct SftpWildcardArgs {
+    int argc;
+    SftpWildcardArg argv[1];
+} SftpWildcardArgs;
 
 typedef struct SftpWildcardMatcher {
     Sftp *sftp;
     SftpCmd *cmd;
-    const char *cdir;
+    const char *cdir; //line codepage
     struct fxp_handle *dirh;
     struct fxp_names *names;
     int namepos;
-    const char *wildcard;
+    const char *wildcard; //line codepage
 } SftpWildcardMatcher;
 
-SftpWildcardMatcher *sftpwcm_begin(const char *name, Sftp *sftp, SftpCmd *cmd)
+static void sftpwcm_free(SftpWildcardMatcher *swcm);
+
+static SftpWildcardMatcher *sftpwcm_begin(const char *dir, const char *wildcard, Sftp *sftp, SftpCmd *cmd)
 {
-    char *wildcard;
-    char *unwcdir, *tmpdir;
-    int len;
-    bool check;
     SftpWildcardMatcher *swcm;
-
-    /*
-     * We don't handle multi-level wildcards; so we expect to find
-     * a fully specified directory part, followed by a wildcard
-     * after that.
-     */
-    wildcard = stripslashes(name, false);
-
-    unwcdir = dupstr(name);
-    len = wildcard - name;
-    unwcdir[len] = '\0';
-    if (len > 0 && unwcdir[len-1] == '/')
-        unwcdir[len-1] = '\0';
-    tmpdir = snewn(1 + len, char);
-    check = wc_unescape(tmpdir, unwcdir);
-    sfree(tmpdir);
-
-    if (!check) {
-        sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "Multiple-level wildcards are not supported in %s", name);
-        sfree(unwcdir);
-        return NULL;
-    }
 
     swcm = snew(SftpWildcardMatcher);
     swcm->sftp = sftp;
     swcm->cmd = cmd;
-    swcm->cdir = sftp_get_absolute_path(sftp->pwd, unwcdir);
+    swcm->cdir = dir;
     swcm->dirh = NULL;
     swcm->names = NULL;
-    swcm->wildcard = dupstr(wildcard);
-    sfree(unwcdir);
+    swcm->wildcard = wildcard;
 
     sftp_set_sending_backend(sftp);
     sftpcmd_set_request(cmd, SSH_FXP_REALPATH, fxp_realpath_send(swcm->cdir));
     return swcm;
 }
 
-bool sftpwcm_realpath_recv(SftpWildcardMatcher *swcm, struct sftp_packet *pktin)
+static bool sftpwcm_realpath_recv(SftpWildcardMatcher *swcm, struct sftp_packet *pktin)
 {
     const char *cdir = fxp_realpath_recv(pktin, swcm->cmd->req);
     sftpcmd_clear_request(swcm->cmd);
     if (!cdir) {
-        sftp_printf(swcm->sftp->seat, SEAT_OUTPUT_STDERR, "unable to open %s: %s", swcm->cdir, fxp_error());
+        sftp_line_printf(swcm->sftp, SEAT_OUTPUT_STDERR, swcm->cdir, "unable to open %s: %s", utf8_arg, fxp_error());
         return false;
     }
     sfree((void *)swcm->cdir);
@@ -73,18 +59,18 @@ bool sftpwcm_realpath_recv(SftpWildcardMatcher *swcm, struct sftp_packet *pktin)
     return true;
 }
 
-bool sftpwcm_opendir_recv(SftpWildcardMatcher *swcm, struct sftp_packet *pktin)
+static bool sftpwcm_opendir_recv(SftpWildcardMatcher *swcm, struct sftp_packet *pktin)
 {
     swcm->dirh = fxp_opendir_recv(pktin, swcm->cmd->req);
     sftpcmd_clear_request(swcm->cmd);
     if (!swcm->dirh) {
-        sftp_printf(swcm->sftp->seat, SEAT_OUTPUT_STDERR, "unable to open %s: %s", swcm->cdir, fxp_error());
+        sftp_line_printf(swcm->sftp, SEAT_OUTPUT_STDERR, swcm->cdir, "unable to open %s: %s", utf8_arg, fxp_error());
         return false;
     }
     return true;
 }
 
-const char *sftpwcm_get_filename(SftpWildcardMatcher *swcm)
+static const char *sftpwcm_get_filename(SftpWildcardMatcher *swcm)
 {
     struct fxp_name *name;
 
@@ -108,13 +94,12 @@ const char *sftpwcm_get_filename(SftpWildcardMatcher *swcm)
             continue;                  /* expected bad filenames */
 
         if (!vet_filename(name->filename)) {
-            sftp_printf(swcm->sftp->seat, SEAT_OUTPUT_STDERR, "ignoring potentially dangerous server-supplied filename '%s'", name->filename);
+            sftp_line_printf(swcm->sftp, SEAT_OUTPUT_STDERR, name->filename, "ignoring potentially dangerous server-supplied filename '%s'", utf8_arg);
             continue;                  /* unexpected bad filename */
         }
 
         if (!wc_match(swcm->wildcard, name->filename))
             continue;                  /* doesn't match the wildcard */
-
         /*
          * We have a working filename. Return it.
          */
@@ -122,7 +107,7 @@ const char *sftpwcm_get_filename(SftpWildcardMatcher *swcm)
     }
 }
 
-bool sftpwcm_readdir_recv(SftpWildcardMatcher *swcm, struct sftp_packet *pktin)
+static bool sftpwcm_readdir_recv(SftpWildcardMatcher *swcm, struct sftp_packet *pktin)
 {
     assert(!swcm->names);
 
@@ -130,7 +115,7 @@ bool sftpwcm_readdir_recv(SftpWildcardMatcher *swcm, struct sftp_packet *pktin)
     sftpcmd_clear_request(swcm->cmd);
     if (!swcm->names) {
         if (fxp_error_type() != SSH_FX_EOF) {
-            sftp_printf(swcm->sftp->seat, SEAT_OUTPUT_STDERR, "%s: reading directory: %s", swcm->cdir, fxp_error());
+            sftp_line_printf(swcm->sftp, SEAT_OUTPUT_STDERR, swcm->cdir, "%s: reading directory: %s", utf8_arg, fxp_error());
         }
         return false;
     } else if (swcm->names->nnames == 0) {
@@ -149,21 +134,21 @@ bool sftpwcm_readdir_recv(SftpWildcardMatcher *swcm, struct sftp_packet *pktin)
     return true;
 }
 
-void sftpwcm_finish(SftpWildcardMatcher *swcm)
+static void sftpwcm_finish(SftpWildcardMatcher *swcm)
 {
     sftp_set_sending_backend(swcm->sftp);
     sftpcmd_set_request(swcm->cmd, SSH_FXP_CLOSE, fxp_close_send(swcm->dirh));
     swcm->dirh = NULL;
 }
 
-void sftpwcm_close_recv(SftpWildcardMatcher *swcm, struct sftp_packet *pktin)
+static void sftpwcm_close_recv(SftpWildcardMatcher *swcm, struct sftp_packet *pktin)
 {
     fxp_close_recv(pktin, swcm->cmd->req);
     sftpcmd_clear_request(swcm->cmd);
     sftpwcm_free(swcm);
 }
 
-void sftpwcm_free(SftpWildcardMatcher *swcm)
+static void sftpwcm_free(SftpWildcardMatcher *swcm)
 {
     sfree((void *)swcm->cdir);
     if (swcm->dirh) {
@@ -176,27 +161,97 @@ void sftpwcm_free(SftpWildcardMatcher *swcm)
     sfree(swcm);
 }
 
+void sftpwcm_args_free(SftpWildcardArgs *args)
+{
+    if (!args) {
+        return;
+    }
+    for (int i = 0; i < args->argc; i++) {
+        SftpWildcardArg *arg = &args->argv[i];
+        sfree((void *)arg->name);
+        sfree((void *)arg->wildcard);
+    }
+    sfree(args);
+}
+
+SftpWildcardArgs *sftpwcm_args_create(Sftp *sftp, int begin_arg, int end_arg, bool disable_wc)
+{
+    int argc = end_arg - begin_arg;
+    bool result = true;
+    SftpWildcardArgs *args = (SftpWildcardArgs *)snewn(sizeof(SftpWildcardArgs)-sizeof(SftpWildcardArg) + argc * sizeof(SftpWildcardArg), char);
+    SftpWildcardArg *arg = args->argv;
+    args->argc = argc;
+
+    for (int current_arg = begin_arg; current_arg < end_arg; current_arg++, arg++) {
+        const char *name = sftp->args.argv[current_arg];
+        bool is_wc = false;
+        if (!disable_wc) {
+            char *unwcname = snewn(strlen(name)+1, char);
+            is_wc = !wc_unescape(unwcname, name);
+            sfree(unwcname);
+        }
+
+        /*
+        * We don't handle multi-level wildcards; so we expect to find
+        * a fully specified directory part, followed by a wildcard
+        * after that.
+        */
+        if (is_wc) {
+            const char *wildcard = stripslashes(name, false);
+
+            char *unwcdir = dupstr(name);
+            int len = wildcard - name;
+            unwcdir[len] = '\0';
+            if (len > 0 && unwcdir[len-1] == '/')
+                unwcdir[len-1] = '\0';
+            char *tmpdir = snewn(1 + len, char);
+            bool check = wc_unescape(tmpdir, unwcdir);
+            sfree(tmpdir);
+
+            if (!check) {
+                sfree(unwcdir);
+                sftp_line_printf(sftp, SEAT_OUTPUT_STDERR, name, "Multiple-level wildcards are not supported in %s", utf8_arg);
+                arg->name = NULL;
+                arg->wildcard = NULL;
+                result = false;
+            } else {
+                arg->name = sftp_utf8_to_line(sftp->line_codepage, sftp_get_absolute_path(sftp->pwd, unwcdir), sftp->seat);
+                sfree(unwcdir);
+                arg->wildcard = sftp_utf8_to_line(sftp->line_codepage, dupstr(wildcard), sftp->seat);
+                if (!arg->name || !arg->wildcard) {
+                    result = false;
+                }
+            }
+        } else {
+            arg->name = sftp_utf8_to_line(sftp->line_codepage, sftp_get_absolute_path(sftp->pwd, name), sftp->seat);
+            arg->wildcard = NULL;
+            if (!arg->name) {
+                result = false;
+            }
+        }
+    }
+    if (!result) {
+        sftpwcm_args_free(args);
+        return NULL;
+    }
+    return args;
+}
+
 static bool sftpwcm_iterator_next_arg(SftpWildcardMatcherIterator* it, Sftp *sftp, SftpCmd *cmd)
 {
     assert(!it->swcm && !it->cname);
-    it->current_arg++;
-    while (it->current_arg < it->end_arg) {
-        const char *filename = sftp->args.argv[it->current_arg];
-        char *unwcfname = snewn(strlen(filename)+1, char);
-        bool is_wc = !it->disable_wc && !wc_unescape(unwcfname, filename);
-        sfree(unwcfname);
-
-        if (is_wc) {
-            it->swcm = sftpwcm_begin(filename, sftp, cmd);
-            if (!it->swcm) {
-                it->current_arg++;
-                continue;
-            }
+    while (it->current_arg < it->args->argc) {
+        SftpWildcardArg *arg = &it->args->argv[it->current_arg];
+        if (arg->wildcard) {
+            it->swcm = sftpwcm_begin(arg->name, arg->wildcard, sftp, cmd);
         } else {
-            it->cname = sftp_get_absolute_path(sftp->pwd, filename);
+            it->cname = arg->name;
             sftp_set_sending_backend(sftp);
             sftpcmd_set_request(cmd, SSH_FXP_REALPATH, fxp_realpath_send(it->cname));
         }
+        arg->name = NULL;
+        arg->wildcard = NULL;
+        it->current_arg++;
         return true;
     }
     return false;
@@ -236,7 +291,7 @@ bool sftpwcm_iterator_pktin(SftpWildcardMatcherIterator* it, Sftp *sftp, SftpCmd
                 it->func(it->cname, sftp, cmd);
                 return true;
             } else {
-                sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "unable to open %s: %s", it->cname, fxp_error());
+                sftp_line_printf(sftp, SEAT_OUTPUT_STDERR, it->cname, "unable to open %s: %s", utf8_arg, fxp_error());
                 return false;
             }
         }
@@ -266,13 +321,12 @@ bool sftpwcm_iterator_pktin(SftpWildcardMatcherIterator* it, Sftp *sftp, SftpCmd
     return false;
 }
 
-void sftpwcm_iterator_init(SftpWildcardMatcherIterator* it, void (*func)(const char *, Sftp *, SftpCmd *))
+void sftpwcm_iterator_init(SftpWildcardMatcherIterator* it, SftpWildcardArgs *args, void (*func)(const char *, Sftp *, SftpCmd *))
 {
+    it->args = args;
     it->current_arg = 0;
-    it->end_arg = 0;
-    it->disable_wc = 0;
     it->swcm = NULL;
-    it->cname = NULL;
+    it->cname = NULL; //line codepage
     it->func = func;
 }
 
@@ -281,5 +335,6 @@ void sftpwcm_iterator_uninit(SftpWildcardMatcherIterator* it)
     if (it->swcm) {
         sftpwcm_free(it->swcm);
     }
+    sftpwcm_args_free(it->args);
     sfree((void *)it->cname);
 }

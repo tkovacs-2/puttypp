@@ -43,3 +43,12 @@ void sftp_free_fxphandle(struct fxp_handle *handle) {
     sfree(handle->hstring);
     sfree(handle);
 }
+
+int sftp_decode_codepage(const char *name, Seat *seat) {
+    int line_codepage = decode_codepage(name);
+    if (line_codepage < 0) {
+        sftp_printf(seat, SEAT_OUTPUT_STDERR, "Warning: remote codepage %s is unknown, fallback to UTF8", name);
+        line_codepage = CP_UTF8;
+    }
+    return line_codepage;
+}

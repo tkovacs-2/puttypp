@@ -27,7 +27,7 @@ typedef struct TestLocal {
     bool allow_cli_output;
 } TestLocal;
 
-void testlocal_init(TestLocal *tl, TestRemote *tr);
+void testlocal_init(TestLocal *tl, TestRemote *tr, const char *line_codepage);
 void testlocal_uninit(TestLocal *tl);
 
 void testlocal_execute(TestLocal *tl, const char *command);

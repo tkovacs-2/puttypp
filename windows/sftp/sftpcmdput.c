@@ -4,6 +4,7 @@
 #include "sftpgetput.h"
 #include "psftp.h"
 #include "sftpprogressbar.h"
+#include "sftpunicode.h"
 
 const char *get_absolute_path(const char *pwd, const char *name);
 
@@ -12,7 +13,7 @@ typedef struct WildcardMatcherIterator {
     int end_arg;
     bool disable_wc;
     WildcardMatcher *wcm;
-    const char *cname;
+    const char *cname; //utf8
 } WildcardMatcherIterator;
 
 static void wcm_iterator_init(WildcardMatcherIterator* it)
@@ -94,8 +95,9 @@ typedef struct SftpCmdPut {
     bool recurse;
     bool user_outfname;
     WildcardMatcherIterator it;
-    const char *fname;
-    const char *outfname;
+    const char *fname; //utf8
+    const char *outfname; //utf8
+    const char *line_outfname; //line codepage
     struct fxp_handle *handle;
     struct fxp_xfer *xfer;
     RFile *file;
@@ -124,7 +126,7 @@ static bool open_files(Sftp *sftp, SftpCmdPut *cmdput)
     attrs.flags = 0;
     PUT_PERMISSIONS(attrs, permissions);
     sftp_set_sending_backend(sftp);
-    sftpcmd_set_request(&cmdput->cmd, SSH_FXP_OPEN, fxp_open_send(cmdput->outfname, SSH_FXF_WRITE | SSH_FXF_CREAT | (cmdput->restart ? 0 : SSH_FXF_TRUNC), &attrs));
+    sftpcmd_set_request(&cmdput->cmd, SSH_FXP_OPEN, fxp_open_send(cmdput->line_outfname, SSH_FXF_WRITE | SSH_FXF_CREAT | (cmdput->restart ? 0 : SSH_FXF_TRUNC), &attrs));
     return true;
 }
 
@@ -138,19 +140,26 @@ static bool put_file(const char *fname, Sftp *sftp, SftpCmd *cmd)
     assert(cmdput->fname == NULL);
     cmdput->fname = fname;
     if (!cmdput->outfname) {
+        assert(cmdput->line_outfname == NULL);
         cmdput->outfname = sftp_get_absolute_path(sftp->pwd, stripslashes(fname, true));
+    }
+    if (!cmdput->line_outfname) {
+        cmdput->line_outfname = sftp_dup_utf8_to_line(sftp->line_codepage, cmdput->outfname, sftp->seat);
+        if (!cmdput->line_outfname) {
+            return false;
+        }
     }
 
     if (cmdput->recurse && file_type(fname) == FILE_TYPE_DIRECTORY) {
         sftp_set_sending_backend(sftp);
-        sftpcmd_set_request(cmd, SSH_FXP_STAT, fxp_stat_send(cmdput->outfname));
+        sftpcmd_set_request(cmd, SSH_FXP_STAT, fxp_stat_send(cmdput->line_outfname));
         cmdput->stat_reason = SR_RECURSE_CHECK_IF_DIR;
         return true;
     }
 
     if (cmdput->user_outfname && !cmdput->recurse) {
         sftp_set_sending_backend(sftp);
-        sftpcmd_set_request(&cmdput->cmd, SSH_FXP_STAT, fxp_stat_send(cmdput->outfname));
+        sftpcmd_set_request(&cmdput->cmd, SSH_FXP_STAT, fxp_stat_send(cmdput->line_outfname));
         cmdput->stat_reason = SR_CHECK_IF_DIR;
         return true;
     }
@@ -161,18 +170,22 @@ static bool dir_put_file(SftpDir *dir, Sftp *sftp, SftpCmdPut *cmdput)
 {
     const char *nextfname = dir_file_cat(dir->fname, dir->ournames[dir->i]);
     const char *nextoutfname = dupcat(dir->outfname, "/", dir->ournames[dir->i]);
-    assert(cmdput->outfname == NULL);
+    assert(cmdput->outfname == NULL && cmdput->line_outfname == NULL);
     cmdput->outfname = nextoutfname;
     return put_file(nextfname, sftp, &cmdput->cmd);
 }
 
-static void check_dir_file_remote(SftpDir *dir, Sftp *sftp, SftpCmdPut *cmdput)
+static bool check_dir_file_remote(SftpDir *dir, Sftp *sftp, SftpCmdPut *cmdput)
 {
-    char *nextoutfname = dupcat(dir->outfname, "/", dir->ournames[dir->i]);
+    const char *nextoutfname = sftp_utf8_to_line(sftp->line_codepage, dupcat(dir->outfname, "/", dir->ournames[dir->i]), sftp->seat);
+    if (!nextoutfname) {
+        return false;
+    }
     sftp_set_sending_backend(sftp);
     sftpcmd_set_request(&cmdput->cmd, SSH_FXP_STAT, fxp_stat_send(nextoutfname));
     cmdput->stat_reason = SR_RECURSE_CHECK_IF_PRESENT;
-    sfree(nextoutfname);
+    sfree((void *)nextoutfname);
+    return true;
 }
 
 static bool next_file(Sftp *sftp, SftpCmdPut *cmdput)
@@ -205,9 +218,11 @@ static bool read_dir(Sftp *sftp, SftpCmdPut *cmdput)
     if (!name) {
         close_directory(dh);
         sfree((void *)cmdput->fname);
+        sftp_dup_utf8_free(cmdput->line_outfname, cmdput->outfname);
         sfree((void *)cmdput->outfname);
         cmdput->fname = NULL;
         cmdput->outfname = NULL;
+        cmdput->line_outfname = NULL;
         return next_file(sftp, cmdput);
     }
     SftpDir *dir = sftpdirstack_push(&cmdput->dirstack);
@@ -215,6 +230,8 @@ static bool read_dir(Sftp *sftp, SftpCmdPut *cmdput)
     dir->outfname = cmdput->outfname;
     cmdput->fname = NULL;
     cmdput->outfname = NULL;
+    sftp_dup_utf8_free(cmdput->line_outfname, dir->outfname);
+    cmdput->line_outfname = NULL;
     do {
         sgrowarray(dir->ournames, dir->namesize, dir->nnames);
         dir->ournames[dir->nnames++] = name;
@@ -225,8 +242,7 @@ static bool read_dir(Sftp *sftp, SftpCmdPut *cmdput)
 
     dir->i = 0;
     if (cmdput->restart) {
-        check_dir_file_remote(dir, sftp, cmdput);
-        return true;
+        return check_dir_file_remote(dir, sftp, cmdput);
     }
     return dir_put_file(dir, sftp, cmdput);
 }
@@ -234,11 +250,13 @@ static bool read_dir(Sftp *sftp, SftpCmdPut *cmdput)
 static void send_close(SftpCmdPut *cmdput, Sftp *sftp)
 {
     sfree((void *)cmdput->fname);
+    sftp_dup_utf8_free(cmdput->line_outfname, cmdput->outfname);
     sfree((void *)cmdput->outfname);
     sftp_set_sending_backend(sftp);
     sftpcmd_set_request(&cmdput->cmd, SSH_FXP_CLOSE, fxp_close_send(cmdput->handle));
     cmdput->fname = NULL;
     cmdput->outfname = NULL;
+    cmdput->line_outfname = NULL;
     cmdput->handle = NULL;
 }
 
@@ -301,21 +319,30 @@ static SftpCmd *generic_init(Sftp *sftp, bool restart, bool multiple)
         return NULL;
     }
 
+    bool user_outfname = (!multiple && i+1 < sftp->args.argc);
+    const char *outfname = NULL;
+    const char *line_outfname = NULL;
+    if (user_outfname) {
+        outfname = sftp_get_absolute_path(sftp->pwd, sftp->args.argv[i+1]);
+        line_outfname = sftp_dup_utf8_to_line(sftp->line_codepage, outfname, sftp->seat);
+        if (!line_outfname) {
+            sfree((void *)outfname);
+            return NULL;
+        }
+    }
+
     SftpCmdPut *cmdput = snew(SftpCmdPut);
     cmdput->restart = restart;
     cmdput->multiple = multiple;
     cmdput->recurse = recurse;
-    cmdput->user_outfname = (!multiple && i+1 < sftp->args.argc);
+    cmdput->user_outfname = user_outfname;
     wcm_iterator_init(&cmdput->it);
     cmdput->it.current_arg = i-1;
     cmdput->it.end_arg = (multiple ? sftp->args.argc : i+1);
     cmdput->it.disable_wc = !multiple;
     cmdput->fname = NULL;
-    if (cmdput->user_outfname) {
-        cmdput->outfname = sftp_get_absolute_path(sftp->pwd, sftp->args.argv[i+1]);
-    } else {
-      cmdput->outfname = NULL;
-    }
+    cmdput->outfname = outfname;
+    cmdput->line_outfname = line_outfname;
     cmdput->handle = NULL;
     cmdput->xfer = NULL;
     cmdput->file = NULL;
@@ -327,6 +354,7 @@ static SftpCmd *generic_init(Sftp *sftp, bool restart, bool multiple)
     sftpcmd_clear_request(&cmdput->cmd);
     if (!wcm_iterator_next(&cmdput->it, sftp, &cmdput->cmd)) {
         sfree((void *)cmdput->fname);
+        sftp_dup_utf8_free(cmdput->line_outfname, cmdput->outfname);
         sfree((void *)cmdput->outfname);
         wcm_iterator_uninit(&cmdput->it);
         sfree(cmdput);
@@ -360,7 +388,7 @@ static bool sftpcmdput_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet 
         sftpcmd_clear_request(cmd);
         if (!result || !(attrs.flags & SSH_FILEXFER_ATTR_PERMISSIONS) || !(attrs.permissions & 0040000)) {
             sftp_set_sending_backend(sftp);
-            sftpcmd_set_request(cmd, SSH_FXP_MKDIR, fxp_mkdir_send(cmdput->outfname, NULL));
+            sftpcmd_set_request(cmd, SSH_FXP_MKDIR, fxp_mkdir_send(cmdput->line_outfname, NULL));
             return true;
         }
         return read_dir(sftp, cmdput);
@@ -383,9 +411,9 @@ static bool sftpcmdput_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet 
         uint64_t offset = attrs.size;
         if (offset != 0) {
             sftp_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "reput: restarting at file position %"PRIu64, offset);
-
             if (seek_file((WFile *)cmdput->file, offset, FROM_START) != 0) {
-                seek_file((WFile *)cmdput->file, 0, FROM_END);    /* *shrug* */
+                sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "reput: failed to seek to file position %"PRIu64, offset);
+                return false;
             }
         }
         start_transfer(sftp, cmdput, offset);
@@ -398,8 +426,7 @@ static bool sftpcmdput_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet 
         if (result) {
             dir->i++;
             if (dir->i < dir->nnames) {
-                check_dir_file_remote(dir, sftp, cmdput);
-                return true;
+                return check_dir_file_remote(dir, sftp, cmdput);
             }
        }
        if (dir->i > 0) {
@@ -413,6 +440,8 @@ static bool sftpcmdput_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet 
         if (result && (attrs.flags & SSH_FILEXFER_ATTR_PERMISSIONS) && (attrs.permissions & 0040000)) {
             const char *outfdir = cmdput->outfname;
             cmdput->outfname = dupcat(outfdir, "/", stripslashes(cmdput->fname, true));
+            sftp_dup_utf8_free(cmdput->line_outfname, outfdir);
+            cmdput->line_outfname = NULL;
             sfree((void *)outfdir);
         }
         return open_files(sftp, cmdput);
@@ -475,6 +504,7 @@ static void sftpcmdput_free(SftpCmd *cmd)
     SftpCmdPut *cmdput = container_of(cmd, SftpCmdPut, cmd);
     sftpprogressbar_finish(&cmdput->progress, cmdput->progress_first_seat);
     sfree((void *)cmdput->fname);
+    sftp_dup_utf8_free(cmdput->line_outfname, cmdput->outfname);
     sfree((void *)cmdput->outfname);
     wcm_iterator_uninit(&cmdput->it);
     if (cmdput->xfer) {

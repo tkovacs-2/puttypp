@@ -6,32 +6,23 @@
 typedef struct Sftp Sftp;
 typedef struct SftpCmd SftpCmd;
 typedef struct SftpWildcardMatcher SftpWildcardMatcher;
+typedef struct SftpWildcardArgs SftpWildcardArgs;
 struct sftp_packet;
 
-SftpWildcardMatcher *sftpwcm_begin(const char *name, Sftp *sftp, SftpCmd *cmd);
-bool sftpwcm_realpath_recv(SftpWildcardMatcher *swcm, struct sftp_packet *pktin);
-bool sftpwcm_opendir_recv(SftpWildcardMatcher *swcm, struct sftp_packet *pktin);
-
-const char *sftpwcm_get_filename(SftpWildcardMatcher *swcm);
-bool sftpwcm_readdir_recv(SftpWildcardMatcher *, struct sftp_packet *pktin);
-
-void sftpwcm_finish(SftpWildcardMatcher *swcm);
-void sftpwcm_close_recv(SftpWildcardMatcher *swcm, struct sftp_packet *pktin);
-
-void sftpwcm_free(SftpWildcardMatcher *swcm);
+SftpWildcardArgs *sftpwcm_args_create(Sftp *sftp, int begin_arg, int end_arg, bool disable_wc);
+void sftpwcm_args_free(SftpWildcardArgs *args);
 
 typedef struct SftpWildcardMatcherIterator {
+    SftpWildcardArgs *args;
     int current_arg;
-    int end_arg;
-    bool disable_wc;
     SftpWildcardMatcher *swcm;
-    const char *cname;
+    const char *cname; //line codepage
     void (*func)(const char *, Sftp *, SftpCmd *);
 } SftpWildcardMatcherIterator;
 
 bool sftpwcm_iterator_next(SftpWildcardMatcherIterator* it, Sftp *sftp, SftpCmd *cmd);
 bool sftpwcm_iterator_pktin(SftpWildcardMatcherIterator* it, Sftp *sftp, SftpCmd *cmd, struct sftp_packet *pktin);
-void sftpwcm_iterator_init(SftpWildcardMatcherIterator* it, void (*func)(const char *, Sftp *, SftpCmd *));
+void sftpwcm_iterator_init(SftpWildcardMatcherIterator* it, SftpWildcardArgs *args, void (*func)(const char *, Sftp *, SftpCmd *));
 void sftpwcm_iterator_uninit(SftpWildcardMatcherIterator* it);
 
 #endif

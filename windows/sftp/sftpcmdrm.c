@@ -2,6 +2,7 @@
 #include "sftputil.h"
 #include "sftpfxp.h"
 #include "sftpwcm.h"
+#include "sftpunicode.h"
 
 typedef struct SftpCmdRm {
     SftpCmd cmd;
@@ -28,16 +29,18 @@ static SftpCmd *sftpcmdrm_init(Sftp *sftp)
         return NULL;
     }
 
-    SftpCmdRm *cmdrm = snew(SftpCmdRm);
-    cmdrm->rmdir = (strcmp(sftp->args.argv[0], "rmdir") == 0);
-    sftpwcm_iterator_init(&cmdrm->it, send_remove);
-    cmdrm->it.end_arg = sftp->args.argc;
-
-    sftpcmd_clear_request(&cmdrm->cmd);
-    if (!sftpwcm_iterator_next(&cmdrm->it, sftp, &cmdrm->cmd)) {
-        sfree(cmdrm);
+    SftpWildcardArgs *args = sftpwcm_args_create(sftp, 1, sftp->args.argc, false);
+    if (args == NULL) {
         return NULL;
     }
+
+    SftpCmdRm *cmdrm = snew(SftpCmdRm);
+    cmdrm->rmdir = (strcmp(sftp->args.argv[0], "rmdir") == 0);
+    sftpwcm_iterator_init(&cmdrm->it, args, send_remove);
+
+    sftpcmd_clear_request(&cmdrm->cmd);
+    bool next = sftpwcm_iterator_next(&cmdrm->it, sftp, &cmdrm->cmd);
+    assert(next);
     return &cmdrm->cmd;
 }
 
@@ -56,9 +59,9 @@ static bool sftpcmdrm_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *
         }
         sftpcmd_clear_request(cmd);
         if (result) {
-            sftp_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "%s %s: OK", sftp->args.argv[0], cmdrm->it.cname);
+            sftp_line_printf(sftp, SEAT_OUTPUT_STDOUT, sftp->args.argv[0], "%s %s: OK", utf8_arg, cmdrm->it.cname);
         } else {
-            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s %s: %s", sftp->args.argv[0], cmdrm->it.cname, fxp_error());
+            sftp_line_printf(sftp, SEAT_OUTPUT_STDERR, sftp->args.argv[0], "%s %s: %s", utf8_arg, cmdrm->it.cname, fxp_error());
         }
         return sftpwcm_iterator_next(&cmdrm->it, sftp, cmd);
     }

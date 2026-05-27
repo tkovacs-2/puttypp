@@ -5,6 +5,7 @@
 #include "sftpgetput.h"
 #include "psftp.h"
 #include "sftpprogressbar.h"
+#include "sftpunicode.h"
 
 const char *get_absolute_path(const char *pwd, const char *name);
 
@@ -17,7 +18,8 @@ typedef struct SftpCmdGet {
     SftpWildcardMatcherIterator it;
 
     const char *fname;
-    const char *outfname;
+    const char *line_fname;
+    const char *outfname; //utf8
     struct fxp_attrs attrs;
     int open_req;
     struct fxp_handle *handle;
@@ -32,11 +34,13 @@ typedef struct SftpCmdGet {
 
 static void send_close(SftpCmdGet *cmdget, Sftp *sftp)
 {
-    sfree((void *)cmdget->fname);
+    sftp_dup_utf8_free(cmdget->fname, cmdget->line_fname);
+    sfree((void *)cmdget->line_fname);
     sfree((void *)cmdget->outfname);
     sftp_set_sending_backend(sftp);
     sftpcmd_set_request(&cmdget->cmd, SSH_FXP_CLOSE, fxp_close_send(cmdget->handle));
     cmdget->fname = NULL;
+    cmdget->line_fname = NULL;
     cmdget->outfname = NULL;
     cmdget->handle = NULL;
 }
@@ -64,21 +68,24 @@ static void get_file(const char *fname, Sftp *sftp, SftpCmd *cmd)
     if (fname == cmdget->it.cname) {
       fname = dupstr(fname);
     }
-    assert(cmdget->fname == NULL);
-    cmdget->fname = fname;
+    assert(cmdget->fname == NULL && cmdget->line_fname == NULL);
+    cmdget->fname = sftp_dup_utf8_from_line(sftp->line_codepage, fname);
+    cmdget->line_fname = fname;
     if (!cmdget->outfname) {
-        cmdget->outfname = get_absolute_path(sftp->lpwd, stripslashes(fname, false));
+        cmdget->outfname = get_absolute_path(sftp->lpwd, stripslashes(cmdget->fname, false));
     }
 
     cmd->vt = &getfile_vt;
     sftp_set_sending_backend(sftp);
-    sftpcmd_set_request(cmd, SSH_FXP_STAT, fxp_stat_send(fname));
+    sftpcmd_set_request(cmd, SSH_FXP_STAT, fxp_stat_send(cmdget->line_fname));
 }
 
 static void dir_get_file(SftpDir *dir, Sftp *sftp, SftpCmdGet *cmdget)
 {
-    const char *nextfname = dupcat(dir->fname, "/", dir->ournames[dir->i]);
-    const char *nextoutfname = dir_file_cat(dir->outfname, dir->ournames[dir->i]);
+    const char *dir_fname = sftp_dup_utf8_from_line(sftp->line_codepage, dir->ournames[dir->i]);
+    const char *nextfname = dupcat(dir->line_fname, "/", dir->ournames[dir->i]);
+    const char *nextoutfname = dir_file_cat(dir->outfname, dir_fname);
+    sftp_dup_utf8_free(dir_fname, dir->ournames[dir->i]);
     assert(cmdget->outfname == NULL);
     cmdget->outfname = nextoutfname;
     get_file(nextfname, sftp, &cmdget->cmd);
@@ -118,7 +125,7 @@ static bool get_file_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *p
                     return false;
                 }
                 sftp_set_sending_backend(sftp);
-                sftpcmd_set_request(cmd, SSH_FXP_OPENDIR, fxp_opendir_send(cmdget->fname));
+                sftpcmd_set_request(cmd, SSH_FXP_OPENDIR, fxp_opendir_send(cmdget->line_fname));
                 return true;
             }
         }
@@ -126,7 +133,7 @@ static bool get_file_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *p
             cmdget->attrs.flags = 0;
         }
         sftp_set_sending_backend(sftp);
-        sftpcmd_set_request(cmd, SSH_FXP_OPEN, fxp_open_send(cmdget->fname, SSH_FXF_READ, NULL));
+        sftpcmd_set_request(cmd, SSH_FXP_OPEN, fxp_open_send(cmdget->line_fname, SSH_FXF_READ, NULL));
         return true;
     } else if (cmd->req_type == SSH_FXP_OPENDIR) {
         assert(!cmdget->handle);
@@ -139,8 +146,10 @@ static bool get_file_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *p
         }
         SftpDir *dir = sftpdirstack_push(&cmdget->dirstack);
         dir->fname = cmdget->fname;
+        dir->line_fname = cmdget->line_fname;
         dir->outfname = cmdget->outfname;
         cmdget->fname = NULL;
+        cmdget->line_fname = NULL;
         cmdget->outfname = NULL;
         sftp_set_sending_backend(sftp);
         sftpcmd_set_request(cmd, SSH_FXP_READDIR, fxp_readdir_send(cmdget->handle));
@@ -353,16 +362,19 @@ static SftpCmd *generic_init(Sftp *sftp, bool restart, bool multiple)
         return NULL;
     }
 
+    SftpWildcardArgs *args = sftpwcm_args_create(sftp, i, (multiple ? sftp->args.argc : i+1), !multiple);
+    if (args == NULL) {
+        return NULL;
+    }
+
     SftpCmdGet *cmdget = snew(SftpCmdGet);
     cmdget->restart = restart;
     cmdget->multiple = multiple;
     cmdget->recurse = recurse;
     cmdget->user_outfname = (!multiple && i+1 < sftp->args.argc);
-    sftpwcm_iterator_init(&cmdget->it, get_file);
-    cmdget->it.current_arg = i-1;
-    cmdget->it.end_arg = (multiple ? sftp->args.argc : i+1);
-    cmdget->it.disable_wc = !multiple;
+    sftpwcm_iterator_init(&cmdget->it, args, get_file);
     cmdget->fname = NULL;
+    cmdget->line_fname = NULL;
     if (cmdget->user_outfname) {
         cmdget->outfname = get_absolute_path(sftp->lpwd, sftp->args.argv[i+1]);
     } else {
@@ -376,10 +388,8 @@ static SftpCmd *generic_init(Sftp *sftp, bool restart, bool multiple)
     sftpdirstack_init(&cmdget->dirstack);
 
     sftpcmd_clear_request(&cmdget->cmd);
-    if (!sftpwcm_iterator_next(&cmdget->it, sftp, &cmdget->cmd)) {
-        sfree(cmdget);
-        return NULL;
-    }
+    bool next = sftpwcm_iterator_next(&cmdget->it, sftp, &cmdget->cmd);
+    assert(next);
     return &cmdget->cmd;
 }
 
@@ -408,7 +418,8 @@ static void sftpcmdget_free(SftpCmd *cmd)
 {
     SftpCmdGet *cmdget = container_of(cmd, SftpCmdGet, cmd);
     sftpprogressbar_finish(&cmdget->progress, cmdget->progress_first_seat);
-    sfree((void *)cmdget->fname);
+    sftp_dup_utf8_free(cmdget->fname, cmdget->line_fname);
+    sfree((void *)cmdget->line_fname);
     sfree((void *)cmdget->outfname);
     sftpwcm_iterator_uninit(&cmdget->it);
     if (cmdget->xfer) {

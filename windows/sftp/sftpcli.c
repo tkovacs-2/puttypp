@@ -70,9 +70,9 @@ static bool pwd_truncate(const char *p, size_t length, size_t *offset)
     return true;
 }
 
-static size_t pwd_get_columns(size_t length, size_t offset)
+static size_t pwd_get_columns(const char *p, size_t length, size_t offset)
 {
-    return offset ? 1 + (length - offset) : length;
+    return offset ? 1 + linenoiseUtf8Colspan(p+offset, length-offset, mk_wcwidth) : linenoiseUtf8Colspan(p, length, mk_wcwidth);
 }
 
 static void pwd_write(const char *p, size_t length, size_t offset, SftpCli *cli)
@@ -85,36 +85,37 @@ static void pwd_write(const char *p, size_t length, size_t offset, SftpCli *cli)
     cli_write(p+offset, length-offset, cli);
 }
 
-static bool pwd_pick_layout(size_t inner,
-                            size_t L, size_t *loff, size_t lnext,
-                            size_t R, size_t *roff, size_t rnext)
+static bool pwd_pick_layout(int inner,
+                            size_t *loff, int *lsize, size_t lnext, int lnextsize,
+                            size_t *roff, int *rsize, size_t rnext, int rnextsize)
 {
-    size_t lsize = pwd_get_columns(L, *loff);
-    size_t rsize = pwd_get_columns(R, *roff);
-    size_t lnextsize = pwd_get_columns(L, lnext);
-    size_t rnextsize = pwd_get_columns(R, rnext);
-
     if (lnextsize >= rnextsize) {
-        if (lnextsize + rsize <= inner) {
+        if (lnextsize + *rsize <= inner) {
             *loff = lnext;
+            *lsize = lnextsize;
             return true;
         }
-        if (rnextsize + lsize <= inner) {
+        if (rnextsize + *lsize <= inner) {
             *roff = rnext;
+            *rsize = rnextsize;
             return true;
         }
     } else {
-        if (rnextsize + lsize <= inner) {
+        if (rnextsize + *lsize <= inner) {
             *roff = rnext;
+            *rsize = rnextsize;
             return true;
         }
-        if (lnextsize + rsize <= inner) {
+        if (lnextsize + *rsize <= inner) {
             *loff = lnext;
+            *lsize = lnextsize;
             return true;
         }
     }
     *loff = lnext;
     *roff = rnext;
+    *lsize = lnextsize;
+    *rsize = rnextsize;
     if (lnextsize + rnextsize <= inner) {
         return true;
     }
@@ -129,13 +130,18 @@ static void pwd_write_line(SftpCli *cli, int columns, const char *lpwd, const ch
     if (columns < 6 || L == 0 || R == 0) {
         return;
     }
-    size_t inner = (size_t)columns - 6u;
+    int inner = columns - 6;
     size_t loffset = 0, roffset = 0;
     size_t lnext = 0, rnext = 0;
     bool canl = true, canr = true;
 
+    int lsize = pwd_get_columns(lpwd, L, 0);
+    int rsize = pwd_get_columns(pwd, R, 0);
+    int lnextsize = lsize;
+    int rnextsize = rsize;
+
     for (;;) {
-        if (pwd_pick_layout(inner, L, &loffset, lnext, R, &roffset, rnext)) {
+        if (pwd_pick_layout(inner, &loffset, &lsize, lnext, lnextsize, &roffset, &rsize, rnext, rnextsize)) {
             cli_write("\x1b[33m[", 6, cli);
             pwd_write(lpwd, L, loffset, cli);
             cli_write(" <> ", 4, cli);
@@ -144,10 +150,18 @@ static void pwd_write_line(SftpCli *cli, int columns, const char *lpwd, const ch
             return;
         }
         if (canl) {
-            canl = pwd_truncate_local(lpwd, L, &lnext);
+            if (pwd_truncate_local(lpwd, L, &lnext)) {
+                lnextsize = pwd_get_columns(lpwd, L, lnext);
+            } else {
+                canl = false;
+            }
         }
         if (canr) {
-            canr = pwd_truncate(pwd, R, &rnext);
+            if (pwd_truncate(pwd, R, &rnext)) {
+                rnextsize = pwd_get_columns(pwd, R, rnext);
+            } else {
+                canr = false;
+            }
         }
         if (!canl && !canr) {
             return;
@@ -158,7 +172,7 @@ static void pwd_write_line(SftpCli *cli, int columns, const char *lpwd, const ch
 void sftpcli_start(SftpCli *cli, int columns,
                    const char *lpwd, const char *pwd) {
     pwd_write_line(cli, columns, lpwd, pwd);
-    linenoiseEditStart(&cli->ls, cli_read, cli_write, cli, "sftp> ", columns, &cli->history);
+    linenoiseEditStart(&cli->ls, cli_read, cli_write, cli, "sftp> ", columns, &cli->history, mk_wcwidth);
 }
 
 void sftpcli_change_columns(SftpCli *cli, int columns) {
@@ -169,35 +183,29 @@ SftpCliState sftpcli_feed(SftpCli *cli, const char *buf, size_t len) {
     cli->buf = buf;
     cli->len = len;
     while (cli->len > 0) {
-        char *line = linenoiseEditFeed(&cli->ls);
-        if (line == NULL) {
+        linenoiseFeedResult result = linenoiseEditFeed(&cli->ls);
+        if (result == LINENOISEFEED_CANCEL) {
             return SFTPCLISTATE_FINISH_CANCEL;
         }
-        if (line == linenoiseExit) {
+        if (result == LINENOISEFEED_EXIT) {
             return SFTPCLISTATE_FINISH_EXIT;
         }
-        if (line == linenoiseCompletion) {
+        if (result == LINENOISEFEED_COMPLETION) {
             return SFTPCLISTATE_COMPLETION;
         }
-        if (line == linenoiseCompletionAgain) {
+        if (result == LINENOISEFEED_COMPLETION_AGAIN) {
             return SFTPCLISTATE_COMPLETION_AGAIN;
         }
-        if (line == linenoiseEditMore) {
+        if (result == LINENOISEFEED_MORE) {
             continue;
         }
-        linenoiseHistoryAdd(&cli->history, line);
-        linenoiseFree(line);
         return SFTPCLISTATE_FINISH;
     }
     return SFTPCLISTATE_CONTINUE;
 }
 
 char *sftpcli_copy_line(SftpCli *cli, bool until_cursor) {
-    size_t len = until_cursor ? cli->ls.pos : cli->ls.len;
-    char *line = snewn(len + 1, char);
-    memcpy(line, cli->ls.buf, len);
-    line[len] = 0;
-    return line;
+    return linenoiseCopyLine(&cli->ls, until_cursor);
 }
 
 size_t sftpcli_get_unprocessed_feed(SftpCli *cli) {

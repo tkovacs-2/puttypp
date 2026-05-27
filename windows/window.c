@@ -1673,7 +1673,19 @@ static void init_fonts(WinGuiFrontend *wgf, int pick_width, int pick_height)
     wgf->fontflag[1] = true;
     wgf->fontflag[2] = true;
 
+    const char *line_codepage_backup = NULL;
+    if (backend_vt_from_conf(conf)->protocol == PROT_SFTP) {
+        const char *line_codepage = conf_get_str(conf, CONF_line_codepage);
+        if (decode_codepage(line_codepage) != CP_UTF8) {
+            line_codepage_backup = dupstr(line_codepage);
+            conf_set_str(conf, CONF_line_codepage, "UTF-8");
+        }
+    }
     init_ucs(conf, &wgf->ucsdata);
+    if (line_codepage_backup) {
+        conf_set_str(conf, CONF_line_codepage, line_codepage_backup);
+        sfree((void *)line_codepage_backup);
+    }
 
     wgf->font_dpi = dpi_info.y;
 }

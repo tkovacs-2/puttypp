@@ -14,7 +14,6 @@ struct Sftp {
     struct sftp_packet *receiving_pkt;
     unsigned int receiving_pkt_fetched;
 
-    const char *homedir;
     const char *pwd;
     const char *lpwd;
 
@@ -32,6 +31,13 @@ struct Sftp {
     SeatVtable sshseat_vt;
     Backend *ssh;
     Conf *ssh_conf;
+
+    const char *line_homedir;
+    const char *line_pwd;
+
+    int line_codepage;
+    const char *line_codepage_name;
+    const char *reconfig_line_codepage_name;
 
     void *requests;
 

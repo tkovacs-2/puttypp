@@ -1,6 +1,7 @@
 #include "sftpcmd.h"
 #include "sftputil.h"
 #include "sftpfxp.h"
+#include "sftpunicode.h"
 #include "psftp.h"
 
 static SftpCmd *sftpinit_init(Sftp *sftp)
@@ -42,16 +43,24 @@ static bool sftpinit_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *p
         sftpcmd_set_request(cmd, SSH_FXP_REALPATH, fxp_realpath_send("."));
         return true;
     }
-    sftp->homedir = fxp_realpath_recv(pktin, cmd->req);
+
+    sftp->line_codepage_name = strdup(conf_get_str(sftp->ssh_conf, CONF_line_codepage));
+    sftp->line_codepage = sftp_decode_codepage(sftp->line_codepage_name, sftp->seat);
+
+    sftp->line_homedir = fxp_realpath_recv(pktin, cmd->req);
     sftpcmd_clear_request(cmd);
 
-    if (!sftp->homedir) {
-        sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "Warning: failed to resolve home directory: %s", fxp_error());
-        sftp->homedir = dupstr(".");
+    if (sftp->line_homedir) {
+        sftp->line_pwd = dupstr(sftp->line_homedir);
+        sftp->pwd = sftp_dup_utf8_from_line(sftp->line_codepage, sftp->line_pwd);
+        sftp_print_pwd(sftp->seat, sftp->pwd);
     } else {
-        sftp_print_pwd(sftp->seat, sftp->homedir);
+        sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "Warning: failed to resolve home directory: %s", fxp_error());
+        sftp->line_homedir = dupstr("/");
+        sftp->line_pwd = dupstr(sftp->line_homedir);
+        sftp->pwd = sftp_dup_utf8_from_line(sftp->line_codepage, sftp->line_pwd);
     }
-    sftp->pwd = dupstr(sftp->homedir);
+
     sftp->lpwd = psftp_getcwd();
     return false;
 }

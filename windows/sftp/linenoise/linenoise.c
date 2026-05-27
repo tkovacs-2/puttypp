@@ -106,12 +106,122 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
 #include <unistd.h>
+#include <assert.h>
 #include "linenoise.h"
 
+static inline int utf8_is_continuation(unsigned char c) {
+    return (c & 0xC0u) == 0x80u;
+}
+
+static size_t utf8_seqlen(unsigned char c) {
+    if (c < 0x80u)
+        return 1;
+    if ((c & 0xE0u) == 0xC0u)
+        return 2;
+    if ((c & 0xF0u) == 0xE0u)
+        return 3;
+    if ((c & 0xF8u) == 0xF0u)
+        return 4;
+    return 0;
+}
+
+static size_t utf8_prev_start(const unsigned char *s, size_t pos) {
+    assert(pos > 0);
+    size_t p = pos - 1;
+    while (p > 0 && utf8_is_continuation(s[p])) {
+        p--;
+    }
+    return p;
+}
+
+static size_t utf8_seqlen_at(const unsigned char *s, size_t pos, size_t len) {
+    assert(pos < len);
+    size_t n = utf8_seqlen(s[pos]);
+    assert(n > 0 && pos + n <= len);
+    return n;
+}
+
+static int utf8_test_char(const unsigned char *s) {
+    unsigned int uc;
+    unsigned char c0, c1, c2, c3;
+    size_t n;
+
+    c0 = s[0];
+    n = utf8_seqlen(c0);
+    if (n == 0) {return 0;}
+    if (n == 1) {
+        uc = c0;
+    } else {
+        c1 = s[1];
+        if (!utf8_is_continuation(c1)) {return 0;}
+        if (n == 2) {
+            uc = ((c0 & 0x1Fu) << 6) | (c1 & 0x3Fu);
+            if (uc < 0x80u) {return 0;}
+        } else {
+            c2 = s[2];
+            if (!utf8_is_continuation(c2)) {return 0;}
+            if (n == 3) {
+                uc = ((c0 & 0x0Fu) << 12) | ((c1 & 0x3Fu) << 6) | (c2 & 0x3Fu);
+                if (uc < 0x800u || (uc >= 0xD800u && uc <= 0xDFFFu)) {return 0;}
+            } else {
+                c3 = s[3];
+                if (!utf8_is_continuation(c3)) {return 0;}
+                uc = ((c0 & 0x07u) << 18) | ((c1 & 0x3Fu) << 12) | ((c2 & 0x3Fu) << 6) | (c3 & 0x3Fu);
+                if (uc < 0x10000u || uc > 0x10FFFFu) {return 0;}
+            }
+        }
+    }
+    return 1;
+}
+
+static size_t utf8_decode_char(const unsigned char *s, unsigned int *uc_out) {
+    unsigned int uc;
+    unsigned char c0, c1, c2, c3;
+    size_t n;
+
+    c0 = s[0];
+    n = utf8_seqlen(c0);
+    if (n == 1) {
+        uc = c0;
+    } else {
+        c1 = s[1];
+        if (n == 2) {
+            uc = ((c0 & 0x1Fu) << 6) | (c1 & 0x3Fu);
+        } else {
+            c2 = s[2];
+            if (n == 3) {
+                uc = ((c0 & 0x0Fu) << 12) | ((c1 & 0x3Fu) << 6) | (c2 & 0x3Fu);
+            } else {
+                c3 = s[3];
+                uc = ((c0 & 0x07u) << 18) | ((c1 & 0x3Fu) << 12) | ((c2 & 0x3Fu) << 6) | (c3 & 0x3Fu);
+            }
+        }
+    }
+    *uc_out = uc;
+    return n;
+}
+
+static int utf8_colspan(const unsigned char *s, size_t len, linenoiseWcWidth wcwidth)
+{
+    int cols = 0;
+    size_t i = 0;
+    while (i < len) {
+        unsigned int uc;
+        size_t step = utf8_decode_char(s+i, &uc);
+        if (step == 0)
+            break;
+        int w = wcwidth(uc);
+        if (w < 0) {
+            w = 0;
+        }
+        cols += w;
+        i += step;
+    }
+    return cols;
+}
+
 #define LINENOISE_DEFAULT_HISTORY_MAX_LEN 100
-#define LINENOISE_MAX_LINE 4096
 
 enum KEY_ACTION{
 	KEY_NULL = 0,	    /* NULL */
@@ -139,6 +249,8 @@ enum KEY_ACTION{
 #define REFRESH_WRITE (1<<1)    // Rewrite the prompt on the screen.
 #define REFRESH_ALL (REFRESH_CLEAN|REFRESH_WRITE) // Do both.
 static void refreshLine(linenoiseState *l);
+static void addToHistory(linenoiseState *l);
+static void popFromHistory(linenoiseHistory *h);
 
 /* Debugging macro. */
 #if 0
@@ -197,8 +309,10 @@ static void abFree(struct abuf *ab) {
  * prompt, just write it, or both. */
 static void refreshMultiLine(linenoiseState *l, int flags) {
     char seq[64];
-    int plen = strlen(l->prompt);
-    int rows = (plen+l->len+l->cols-1)/l->cols; /* rows used by current buf. */
+    int plen = l->plen;
+    int wpos = utf8_colspan((const unsigned char *)l->buf, l->pos, l->wcwidth);
+    int wlen = wpos + utf8_colspan((const unsigned char *)l->buf + l->pos, l->len - l->pos, l->wcwidth);
+    int rows = (plen+wlen+l->cols-1)/l->cols; /* rows used by current buf. */
     int rpos = (plen+l->oldpos+l->cols)/l->cols; /* cursor relative row. */
     int rpos2; /* rpos after refresh. */
     int col; /* colum position, zero-based. */
@@ -243,7 +357,7 @@ static void refreshMultiLine(linenoiseState *l, int flags) {
          * emit a newline and move the prompt to the first column. */
         if (l->pos &&
             l->pos == l->len &&
-            (l->pos+plen) % l->cols == 0)
+            (wpos+plen) % l->cols == 0)
         {
             lndebug("<newline>");
             abAppend(&ab,"\n",1);
@@ -254,7 +368,7 @@ static void refreshMultiLine(linenoiseState *l, int flags) {
         }
 
         /* Move cursor to right position. */
-        rpos2 = (plen+l->pos+l->cols)/l->cols; /* Current cursor relative row */
+        rpos2 = (plen+wpos+l->cols)/l->cols; /* Current cursor relative row */
         lndebug("rpos2 %d", rpos2);
 
         /* Go up till we reach the expected positon. */
@@ -265,7 +379,7 @@ static void refreshMultiLine(linenoiseState *l, int flags) {
         }
 
         /* Set column. */
-        col = (plen+(int)l->pos) % (int)l->cols;
+        col = (plen+wpos) % (int)l->cols;
         lndebug("set col %d", 1+col);
         if (col)
             snprintf(seq,64,"\r\x1b[%dC", col);
@@ -275,7 +389,7 @@ static void refreshMultiLine(linenoiseState *l, int flags) {
     }
 
     lndebug("\n");
-    l->oldpos = l->pos;
+    l->oldpos = wpos;
 
     if (l->ofd(ab.b,ab.len, l->cb_ctx) == -1) {} /* Can't recover from write error. */
     abFree(&ab);
@@ -296,41 +410,42 @@ void linenoiseShow(linenoiseState *l) {
     refreshMultiLine(l,REFRESH_WRITE);
 }
 
-/* Insert the character 'c' at cursor current position.
- *
- * On error writing to the terminal -1 is returned, otherwise 0. */
-static int editInsert(linenoiseState *l, char c) {
-    if (l->len < l->buflen) {
-        if (l->len == l->pos) {
-            l->buf[l->pos] = c;
-            l->pos++;
-            l->len++;
-            l->buf[l->len] = '\0';
-            refreshLine(l);
-        } else {
-            memmove(l->buf+l->pos+1,l->buf+l->pos,l->len-l->pos);
-            l->buf[l->pos] = c;
-            l->len++;
-            l->pos++;
-            l->buf[l->len] = '\0';
-            refreshLine(l);
-        }
+static void editInsert(linenoiseState *l, unsigned char c) {
+    unsigned char tmp[4];
+    size_t n = utf8_seqlen(c);
+    assert(n > 0);
+    tmp[0] = c;
+    if (n > 1) {
+        size_t nread = l->ifd(tmp+1, n-1, l->cb_ctx);
+        assert(nread == n-1);
     }
-    return 0;
+    assert(utf8_test_char(tmp));
+    if (l->len + n > l->buflen) {
+        return;
+    }
+    if (l->len != l->pos) {
+        memmove(l->buf + l->pos + n, l->buf + l->pos, l->len - l->pos);
+    }
+    memcpy(l->buf + l->pos, tmp, n);
+    l->pos += n;
+    l->len += n;
+    l->buf[l->len] = '\0';
+    refreshLine(l);
+    return;
 }
 
 /* Move cursor on the left. */
 static void editMoveLeft(linenoiseState *l) {
     if (l->pos > 0) {
-        l->pos--;
+        l->pos = utf8_prev_start((const unsigned char *)l->buf, l->pos);
         refreshLine(l);
     }
 }
 
 /* Move cursor on the right. */
 static void editMoveRight(linenoiseState *l) {
-    if (l->pos != l->len) {
-        l->pos++;
+    if (l->pos < l->len) {
+        l->pos += utf8_seqlen_at((const unsigned char *)l->buf, l->pos, l->len);
         refreshLine(l);
     }
 }
@@ -362,7 +477,7 @@ static void editHistoryNext(linenoiseState *l, int dir) {
          * overwrite it with the next one. */
         free(h->history[h->history_len - 1 - l->history_index]);
         h->history[h->history_len - 1 - l->history_index] = strdup(l->buf);
-        /* Show the new entry */
+        /* Show the new entrys */
         l->history_index += (dir == LINENOISE_HISTORY_PREV) ? 1 : -1;
         if (l->history_index < 0) {
             l->history_index = 0;
@@ -382,9 +497,9 @@ static void editHistoryNext(linenoiseState *l, int dir) {
  * position. Basically this is what happens with the "Delete" keyboard key. */
 static void editDelete(linenoiseState *l) {
     if (l->len > 0 && l->pos < l->len) {
-        memmove(l->buf+l->pos,l->buf+l->pos+1,l->len-l->pos-1);
-        l->len--;
-        l->buf[l->len] = '\0';
+        size_t n = utf8_seqlen_at((const unsigned char *)l->buf, l->pos, l->len);
+        memmove(l->buf + l->pos, l->buf + l->pos + n, l->len - l->pos - n + 1);
+        l->len -= n;
         refreshLine(l);
     }
 }
@@ -392,10 +507,11 @@ static void editDelete(linenoiseState *l) {
 /* Backspace implementation. */
 static void editBackspace(linenoiseState *l) {
     if (l->pos > 0 && l->len > 0) {
-        memmove(l->buf+l->pos-1,l->buf+l->pos,l->len-l->pos);
-        l->pos--;
-        l->len--;
-        l->buf[l->len] = '\0';
+        size_t st = utf8_prev_start((const unsigned char *)l->buf, l->pos);
+        size_t n = l->pos - st;
+        memmove(l->buf + st, l->buf + l->pos, l->len - l->pos + 1);
+        l->pos = st;
+        l->len -= n;
         refreshLine(l);
     }
 }
@@ -406,10 +522,19 @@ static void editDeletePrevWord(linenoiseState *l) {
     size_t old_pos = l->pos;
     size_t diff;
 
-    while (l->pos > 0 && l->buf[l->pos-1] == ' ')
-        l->pos--;
-    while (l->pos > 0 && l->buf[l->pos-1] != ' ')
-        l->pos--;
+    while (l->pos > 0) {
+        size_t st = utf8_prev_start((const unsigned char *)l->buf, l->pos);
+        if (l->pos - st == 1 && l->buf[st] == ' ')
+            l->pos = st;
+        else
+            break;
+    }
+    while (l->pos > 0) {
+        size_t st = utf8_prev_start((const unsigned char *)l->buf, l->pos);
+        if (l->pos - st == 1 && l->buf[st] == ' ')
+            break;
+        l->pos = st;
+    }
     diff = old_pos - l->pos;
     memmove(l->buf+l->pos,l->buf+old_pos,l->len-old_pos+1);
     l->len -= diff;
@@ -439,14 +564,18 @@ static void editDeletePrevWord(linenoiseState *l) {
  * The function returns 0 on success, or -1 if writing to standard output
  * fails. If stdin_fd or stdout_fd are set to -1, the default is to use
  * STDIN_FILENO and STDOUT_FILENO.
+ *
+ * wcwidth is called for each decoded Unicode scalar when computing line wrap
+ * and cursor column (see linenoiseWcWidth). It may be NULL (width 1 per scalar).
  */
-int linenoiseEditStart(linenoiseState *l, linenoiseRead read_cb, linenouseWrite write_cb, void *cb_ctx, const char *prompt, int cols, linenoiseHistory *history) {
+int linenoiseEditStart(linenoiseState *l, linenoiseRead read_cb, linenouseWrite write_cb, void *cb_ctx, const char *prompt, int cols, linenoiseHistory *history, linenoiseWcWidth wcwidth) {
     /* Populate the linenoise state that we pass to functions implementing
      * specific editing functionalities. */
     l->in_completion = 0;
     l->ifd = read_cb;
     l->ofd = write_cb;
     l->cb_ctx = cb_ctx;
+    l->wcwidth = wcwidth;
     l->buf = l->t;
     l->buflen = sizeof(l->t);
     l->prompt = prompt;
@@ -463,16 +592,11 @@ int linenoiseEditStart(linenoiseState *l, linenoiseRead read_cb, linenouseWrite 
     /* The latest history entry is always our current buffer, that
      * initially is just an empty string. */
     l->history = history;
-    linenoiseHistoryAdd(l->history, "");
+    addToHistory(l);
 
     if (l->ofd(prompt,l->plen, l->cb_ctx) == -1) return -1;
     return 0;
 }
-
-char *linenoiseEditMore = "If you see this, you are misusing the API: when linenoiseEditFeed() is called, if it returns linenoiseEditMore the user is yet editing the line. See the README file for more information.";
-char *linenoiseExit = "If you see this, you are misusing the API: when linenoiseEditFeed() is called, ctrl+d was pressed in empty line.";
-char *linenoiseCompletion = "If you see this, you are misusing the API: when linenoiseEditFeed() is called, tab was pressed.";
-char *linenoiseCompletionAgain = "If you see this, you are misusing the API: when linenoiseEditFeed() is called, tab was pressed again.";
 
 /* This function is part of the multiplexed API of linenoise, see the top
  * comment on linenoiseEditStart() for more information. Call this function
@@ -492,29 +616,30 @@ char *linenoiseCompletionAgain = "If you see this, you are misusing the API: whe
  *
  * Some other errno: I/O error.
  */
-char *linenoiseEditFeed(linenoiseState *l) {
+ linenoiseFeedResult linenoiseEditFeed(linenoiseState *l) {
     char c;
     int nread;
     char seq[3];
 
     nread = l->ifd(&c,1, l->cb_ctx);
-    if (nread <= 0) return NULL;
+    if (nread <= 0) return LINENOISEFEED_MORE;
 
     if (c == TAB) {
-        if (l->in_completion) {return linenoiseCompletionAgain;}
+        if (l->in_completion) {return LINENOISEFEED_COMPLETION_AGAIN;}
         l->in_completion = 1;
-        return linenoiseCompletion;
+        return LINENOISEFEED_COMPLETION;
     }
     l->in_completion = 0;
 
     switch(c) {
     case ENTER:    /* enter */
-        l->history->history_len--;
-        free(l->history->history[l->history->history_len]);
+        popFromHistory(l->history);
+        addToHistory(l);
         editMoveEnd(l);
-        return strdup(l->buf);
+        return LINENOISEFEED_FINISH;
     case CTRL_C:     /* ctrl-c */
-        return NULL;
+        popFromHistory(l->history);
+        return LINENOISEFEED_CANCEL;
     case BACKSPACE:   /* backspace */
     case CTRL_H:     /* ctrl-h */
         editBackspace(l);
@@ -524,18 +649,24 @@ char *linenoiseEditFeed(linenoiseState *l) {
         if (l->len > 0) {
             editDelete(l);
         } else {
-            l->history->history_len--;
-            free(l->history->history[l->history->history_len]);
-            return linenoiseExit;
+            popFromHistory(l->history);
+            return LINENOISEFEED_EXIT;
         }
         break;
-    case CTRL_T:    /* ctrl-t, swaps current character with previous. */
+    case CTRL_T:    /* ctrl-t, swap previous codepoint with current. */
         if (l->pos > 0 && l->pos < l->len) {
-            int aux = l->buf[l->pos-1];
-            l->buf[l->pos-1] = l->buf[l->pos];
-            l->buf[l->pos] = aux;
-            if (l->pos != l->len-1) l->pos++;
-            refreshLine(l);
+            size_t p1 = l->pos;
+            size_t p0 = utf8_prev_start((const unsigned char *)l->buf, p1);
+            size_t n0 = p1 - p0;
+            size_t n1 = utf8_seqlen_at((const unsigned char *)l->buf, p1, l->len);
+            char t[8];
+            if (n0 > 0 && n1 > 0 && n0 + n1 <= sizeof(t)) {
+                memcpy(t, l->buf + p1, n1);
+                memcpy(t + n1, l->buf + p0, n0);
+                memcpy(l->buf + p0, t, n0 + n1);
+                l->pos = p0 + n0 + n1;
+                refreshLine(l);
+            }
         }
         break;
     case CTRL_B:     /* ctrl-b */
@@ -612,7 +743,7 @@ char *linenoiseEditFeed(linenoiseState *l) {
         }
         break;
     default:
-        if (editInsert(l,c)) return NULL;
+        editInsert(l, (unsigned char)c);
         break;
     case CTRL_U: /* Ctrl+u, delete the whole line. */
         l->buf[0] = '\0';
@@ -634,16 +765,7 @@ char *linenoiseEditFeed(linenoiseState *l) {
         editDeletePrevWord(l);
         break;
     }
-    return linenoiseEditMore;
-}
-
-/* This is just a wrapper the user may want to call in order to make sure
- * the linenoise returned buffer is freed with the same allocator it was
- * created with. Useful when the main program is using an alternative
- * allocator. */
-void linenoiseFree(void *ptr) {
-    if (ptr == linenoiseEditMore || ptr == linenoiseExit) return; // Protect from API misuse.
-    free(ptr);
+    return LINENOISEFEED_MORE;
 }
 
 /* ================================ History ================================= */
@@ -673,25 +795,27 @@ void linenoiseFreeHistory(linenoiseHistory *h) {
  * histories, but will work well for a few hundred of entries.
  *
  * Using a circular buffer is smarter, but a bit more complex to handle. */
-int linenoiseHistoryAdd(linenoiseHistory *h, const char *line) {
+static void addToHistory(linenoiseState *l) {
+    linenoiseHistory *h = l->history;
+    const char *line = l->buf;
     char *linecopy;
 
-    if (h->history_max_len == 0) return 0;
+    if (h->history_max_len == 0) return;
 
     /* Initialization on first call. */
     if (h->history == NULL) {
         h->history = malloc(sizeof(char*)*h->history_max_len);
-        if (h->history == NULL) return 0;
+        if (h->history == NULL) return;
         memset(h->history,0,(sizeof(char*)*h->history_max_len));
     }
 
     /* Don't add duplicated lines. */
-    if (h->history_len && !strcmp(h->history[h->history_len-1], line)) return 0;
+    if (h->history_len && !strcmp(h->history[h->history_len-1], line)) return;
 
     /* Add an heap allocated copy of the line in the history.
      * If we reached the max length, remove the older line. */
     linecopy = strdup(line);
-    if (!linecopy) return 0;
+    if (!linecopy) return;
     if (h->history_len == h->history_max_len) {
         free(h->history[0]);
         memmove(h->history,h->history+1,sizeof(char*)*(h->history_max_len-1));
@@ -699,7 +823,13 @@ int linenoiseHistoryAdd(linenoiseHistory *h, const char *line) {
     }
     h->history[h->history_len] = linecopy;
     h->history_len++;
-    return 1;
+}
+
+static void popFromHistory(linenoiseHistory *h) {
+    if (h->history_len > 0) {
+        h->history_len--;
+        free(h->history[h->history_len]);
+    }
 }
 
 /* Set the maximum length for the history. This function can be called even
@@ -737,4 +867,16 @@ int linenoiseHistorySetMaxLen(linenoiseHistory *h, int len) {
 void linenoiseChangeColumns(linenoiseState *l, int cols) {
     l->cols = cols;
     refreshLine(l);
+}
+
+char *linenoiseCopyLine(linenoiseState *l, int until_cursor) {
+    size_t len = until_cursor ? l->pos : l->len;
+    char *line = malloc(len + 1);
+    memcpy(line, l->buf, len);
+    line[len] = 0;
+    return line;
+}
+
+int linenoiseUtf8Colspan(const char *s, size_t len, linenoiseWcWidth wcwidth) {
+    return utf8_colspan((const unsigned char *)s, len, wcwidth);
 }

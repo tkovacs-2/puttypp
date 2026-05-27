@@ -45,13 +45,9 @@ extern "C" {
 
 #include <stddef.h> /* For size_t. */
 
-extern char *linenoiseEditMore;
-extern char *linenoiseExit;
-extern char *linenoiseCompletion;
-extern char *linenoiseCompletionAgain;
-
 typedef ssize_t (*linenoiseRead)(void *buffer, size_t count, void *ctx);
 typedef ssize_t (*linenouseWrite)(const void *buffer, size_t count, void *ctx);
+typedef int (*linenoiseWcWidth)(unsigned int ucs);
 
 typedef struct {
     int history_max_len;
@@ -78,24 +74,34 @@ typedef struct {
     int history_index;  /* The history index we are currently editing. */
     linenoiseHistory *history;
     void *cb_ctx;
+    linenoiseWcWidth wcwidth; /* terminal column width per UCS scalar */
     char t[1024];
 } linenoiseState;
 
+typedef enum {
+    LINENOISEFEED_CANCEL,   /* Ctrl-C was pressed */
+    LINENOISEFEED_FINISH,   /* Enter was pressed */
+    LINENOISEFEED_MORE,     /* More data is needed to complete the line */
+    LINENOISEFEED_EXIT,     /* Ctrl-D was pressed in empty line*/
+    LINENOISEFEED_COMPLETION, /* Tab was pressed */
+    LINENOISEFEED_COMPLETION_AGAIN /* Tab was pressed again */
+} linenoiseFeedResult;
+
 /* Non blocking API. */
-int linenoiseEditStart(linenoiseState *l, linenoiseRead read_cb, linenouseWrite write_cb, void *cb_ctx, const char *prompt, int cols, linenoiseHistory *history);
-char *linenoiseEditFeed(linenoiseState *l);
+int linenoiseEditStart(linenoiseState *l, linenoiseRead read_cb, linenouseWrite write_cb, void *cb_ctx, const char *prompt, int cols, linenoiseHistory *history, linenoiseWcWidth wcwidth);
+linenoiseFeedResult linenoiseEditFeed(linenoiseState *l);
 void linenoiseHide(linenoiseState *l);
 void linenoiseShow(linenoiseState *l);
 void linenoiseChangeColumns(linenoiseState *l, int cols);
-
-/* Blocking API. */
-void linenoiseFree(void *ptr);
+char *linenoiseCopyLine(linenoiseState *l, int until_cursor);
 
 /* History API. */
 void linenoiseInitHistory(linenoiseHistory *h);
 void linenoiseFreeHistory(linenoiseHistory *h);
-int linenoiseHistoryAdd(linenoiseHistory *h, const char *line);
 int linenoiseHistorySetMaxLen(linenoiseHistory *h, int len);
+
+/* Exposed utf8 helper API */
+int linenoiseUtf8Colspan(const char *s, size_t len, linenoiseWcWidth wcwidth);
 
 #ifdef __cplusplus
 }

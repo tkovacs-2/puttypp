@@ -71,11 +71,12 @@ static void append_output(TestOutput *o, const char *data, size_t len)
     }
 }
 
-void testlocal_init(TestLocal *tl, TestRemote *tr)
+void testlocal_init(TestLocal *tl, TestRemote *tr, const char *line_codepage)
 {
-    delete_directory_recurse("local");
-    create_directory("local");
-    psftp_lcd("local");
+    char *local_dir = "l" "\xc3\xb6\xe4\xbd\xa0" "cal";
+    delete_directory_recurse(local_dir);
+    create_directory(local_dir);
+    psftp_lcd(local_dir);
 
     tl->testseat.vt = &testseat_vt;
     init_output(&tl->output);
@@ -85,6 +86,7 @@ void testlocal_init(TestLocal *tl, TestRemote *tr)
 
     Conf *conf = conf_new();
     conf_set_int(conf, CONF_sshprot, 2);
+    conf_set_str(conf, CONF_line_codepage, line_codepage);
     backend_init(&sftp_backend, &tl->testseat, &tl->sftp, NULL, conf,
                  (const char *)tr, 0, NULL, 0, false);
     conf_free(conf);
@@ -239,13 +241,11 @@ static size_t testseat_output(Seat *seat, SeatOutputType type, const void *data,
     }
     if (type == SEAT_OUTPUT_STDOUT) {
         append_output(&tl->output, data, len);
-        fwrite(data, 1, len, stdout);
-        fflush(stdout);
     } else if (type == SEAT_OUTPUT_STDERR) {
         append_output(&tl->error, data, len);
-        fwrite(data, 1, len, stderr);
-        fflush(stderr);
     }
+    fwrite(data, 1, len, stdout);
+    fflush(stdout);
     return len;
 }
 
