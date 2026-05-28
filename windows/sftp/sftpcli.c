@@ -4,7 +4,7 @@
 
 struct SftpCli {
     Seat *seat;
-    struct linenoiseState ls;
+    linenoiseState ls;
     linenoiseHistory history;
     const char *buf;
     size_t len;

@@ -62,7 +62,7 @@ typedef struct {
 /* The linenoiseState structure represents the state during line editing.
  * We pass this state to functions implementing specific editing
  * functionalities. */
-struct linenoiseState {
+typedef struct {
     int in_completion;  /* The user pressed TAB and we are now in completion */
     linenoiseRead ifd;            /* Terminal stdin file descriptor. */
     linenouseWrite ofd;            /* Terminal stdout file descriptor. */
@@ -79,14 +79,14 @@ struct linenoiseState {
     linenoiseHistory *history;
     void *cb_ctx;
     char t[1024];
-};
+} linenoiseState;
 
 /* Non blocking API. */
-int linenoiseEditStart(struct linenoiseState *l, linenoiseRead read_cb, linenouseWrite write_cb, void *cb_ctx, const char *prompt, int cols, linenoiseHistory *history);
-char *linenoiseEditFeed(struct linenoiseState *l);
-void linenoiseHide(struct linenoiseState *l);
-void linenoiseShow(struct linenoiseState *l);
-void linenoiseChangeColumns(struct linenoiseState *l, int cols);
+int linenoiseEditStart(linenoiseState *l, linenoiseRead read_cb, linenouseWrite write_cb, void *cb_ctx, const char *prompt, int cols, linenoiseHistory *history);
+char *linenoiseEditFeed(linenoiseState *l);
+void linenoiseHide(linenoiseState *l);
+void linenoiseShow(linenoiseState *l);
+void linenoiseChangeColumns(linenoiseState *l, int cols);
 
 /* Blocking API. */
 void linenoiseFree(void *ptr);
