@@ -266,17 +266,17 @@ static void local_completion(SftpCompletion *completion, const char *arg, SftpCm
     size_t namesize = 0;
 
     const char *absolute_arg = get_absolute_path(completion->sftp->lpwd, arg);
-    char *wildcard_arg = dupcat(absolute_arg, "*");
     const char *filename = stripslashes(absolute_arg, true);
     size_t parent_length = filename - absolute_arg;
     size_t prefix_length = strlen(filename);
+    char *wildcard_arg = dupcat(absolute_arg, "*");
+    sfree((void *)absolute_arg);
 
     WildcardMatcher *wcm = begin_wildcard_matching(wildcard_arg);
+    sfree(wildcard_arg);
     if (!wcm) {
         return;
     }
-    sfree(wildcard_arg);
-    sfree((void *)absolute_arg);
     while (true) {
         char *name = wildcard_get_filename(wcm);
         if (name == NULL) {
