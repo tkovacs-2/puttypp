@@ -547,8 +547,13 @@ static void tc_completion(TestLocal *tl, TestRemote *tr)
     ASSERT_TRUE(testlocal_find_output(&tl->output, "sftp> help chmod", false));
     completion_cancel_line(sftp);
 
-    testlocal_clear_output(tl);
     completion_send(sftp, tr, "lcd q\x09", 6);
+    testlocal_clear_output(tl);
+    completion_tab_open_paging(sftp);
+    ASSERT_TRUE(testlocal_empty_output(&tl->output));
+    completion_cancel_line(sftp);
+
+    completion_send(sftp, tr, "cd q\x09", 6);
     testlocal_clear_output(tl);
     completion_tab_open_paging(sftp);
     ASSERT_TRUE(testlocal_empty_output(&tl->output));

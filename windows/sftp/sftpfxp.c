@@ -2,7 +2,7 @@
 
 #include "sftpbe.h"
 
-static Backend *sending_backend;
+static Backend *sending_backend = NULL;
 
 bool sftp_recvdata(char *buf, size_t len)
 {
@@ -24,6 +24,11 @@ void sftp_set_sending_backend(Sftp *sftp)
 {
     sending_backend = sftp->ssh;
     sftp_requests = sftp->requests;
+}
+
+void sftp_clear_sending_backend()
+{
+    sending_backend = NULL;
 }
 
 void sftp_init_requests(Sftp *sftp)

@@ -1,5 +1,7 @@
 #include "testremote.h"
 
+void sftp_clear_sending_backend();
+
 struct TestRemoteFile {
     TestRemoteFile *parent;
     const char *name;
@@ -179,6 +181,7 @@ void testremote_init(TestRemote *tr)
 {
     tr->srv.vt = &srv_vt;
     bufchain_init(&tr->received_data);
+    sftp_clear_sending_backend();
     tr->root = snew(TestRemoteFile);
     tr->root->parent = NULL;
     tr->root->name = NULL;
@@ -300,6 +303,7 @@ struct sftp_packet *testremote_get_request(TestRemote *tr)
         return NULL;
     }
     sftp_recv_finish(pkt);
+    sftp_clear_sending_backend();
     return pkt;
 }
 
