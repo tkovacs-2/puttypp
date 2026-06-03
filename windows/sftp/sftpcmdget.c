@@ -310,7 +310,7 @@ static bool get_file_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *p
             if (wpos < len) {          /* we had an error */
                 cmdget->stop = true;
                 xfer_set_error(cmdget->xfer);
-            } else {
+            } else if (len > 0) {
                 sftpprogressbar_update(&cmdget->progress, len);
                 got_data = true;
             }
