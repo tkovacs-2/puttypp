@@ -1,4 +1,5 @@
 #include "sftpcmd.h"
+#include "sftputil.h"
 #include "sftpcli.h"
 #include "sftpcompletion.h"
 #include "psftp.h"
@@ -304,7 +305,7 @@ static void remote_completion_continue(SftpCompletion *completion, const char *f
 
 static const SftpCmdVtable *remote_completion(SftpCompletion *completion, const char *arg, SftpCmdArgInfo arg_info)
 {
-    const char *path = sftpcmd_get_absolute_path(completion->sftp->pwd, arg);
+    const char *path = sftp_get_absolute_path(completion->sftp->pwd, arg);
     char *filename = stripslashes(path, false);
     size_t parent_length = filename - path;
 

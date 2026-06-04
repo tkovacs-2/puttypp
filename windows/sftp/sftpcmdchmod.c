@@ -1,4 +1,5 @@
 #include "sftpcmd.h"
+#include "sftputil.h"
 #include "sftpfxp.h"
 #include "sftpwcm.h"
 
@@ -24,7 +25,7 @@ static void send_stat(const char *fname, Sftp *sftp, SftpCmd *cmd)
 static SftpCmd *sftpcmdchmod_init(Sftp *sftp)
 {
     if (sftp->args.argc < 3) {
-        sftpcmd_print(sftp->seat, SEAT_OUTPUT_STDERR, "chmod: expects a mode specifier and a filename");
+        sftp_print(sftp->seat, SEAT_OUTPUT_STDERR, "chmod: expects a mode specifier and a filename");
         return NULL;
     }
 
@@ -32,7 +33,7 @@ static SftpCmd *sftpcmdchmod_init(Sftp *sftp)
     const char *mode = sftp->args.argv[1];
     if (mode[0] >= '0' && mode[0] <= '9') {
         if (mode[strspn(mode, "01234567")]) {
-            sftpcmd_print(sftp->seat, SEAT_OUTPUT_STDERR, "chmod: numeric file modes should"
+            sftp_print(sftp->seat, SEAT_OUTPUT_STDERR, "chmod: numeric file modes should"
                    " contain digits 0-7 only");
             return NULL;
         }
@@ -54,7 +55,7 @@ static SftpCmd *sftpcmdchmod_init(Sftp *sftp)
                   case 'o': subset |= 00007; break; /* just other perms */
                   case 'a': subset |= 06777; break; /* all of the above */
                   default:
-                    sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "chmod: file mode '%.*s' contains unrecognised"
+                    sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "chmod: file mode '%.*s' contains unrecognised"
                            " user/group/other specifier '%c'",
                            (int)strcspn(modebegin, ","), modebegin, *mode);
                     return NULL;
@@ -62,13 +63,13 @@ static SftpCmd *sftpcmdchmod_init(Sftp *sftp)
                 mode++;
             }
             if (!*mode || *mode == ',') {
-                sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "chmod: file mode '%.*s' is incomplete",
+                sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "chmod: file mode '%.*s' is incomplete",
                        (int)strcspn(modebegin, ","), modebegin);
                 return NULL;
             }
             action = *mode++;
             if (!*mode || *mode == ',') {
-                sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "chmod: file mode '%.*s' is incomplete",
+                sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "chmod: file mode '%.*s' is incomplete",
                        (int)strcspn(modebegin, ","), modebegin);
                 return NULL;
             }
@@ -82,7 +83,7 @@ static SftpCmd *sftpcmdchmod_init(Sftp *sftp)
                   case 's':
                     if ((subset & 06777) != 04700 &&
                         (subset & 06777) != 02070) {
-                        sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "chmod: file mode '%.*s': set[ug]id bit should"
+                        sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "chmod: file mode '%.*s': set[ug]id bit should"
                                " be used with exactly one of u or g only",
                                (int)strcspn(modebegin, ","), modebegin);
                         return NULL;
@@ -90,7 +91,7 @@ static SftpCmd *sftpcmdchmod_init(Sftp *sftp)
                     perms |= 06000;
                     break;
                   default:
-                    sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "chmod: file mode '%.*s' contains unrecognised"
+                    sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "chmod: file mode '%.*s' contains unrecognised"
                            " permission specifier '%c'",
                            (int)strcspn(modebegin, ","), modebegin, *mode);
                     return NULL;
@@ -98,7 +99,7 @@ static SftpCmd *sftpcmdchmod_init(Sftp *sftp)
                 mode++;
             }
             if (!(subset & 06777) && (perms &~ subset)) {
-                sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "chmod: file mode '%.*s' contains no user/group/other"
+                sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "chmod: file mode '%.*s' contains no user/group/other"
                        " specifier and permissions other than 't' ",
                        (int)strcspn(modebegin, ","), modebegin);
                 return NULL;
@@ -147,7 +148,7 @@ static bool sftpcmdchmod_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packe
         sftpcmd_clear_request(cmd);
 
         if (!result || !(attrs.flags & SSH_FILEXFER_ATTR_PERMISSIONS)) {
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "get attrs for %s: %s", cmdchmod->fname,
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "get attrs for %s: %s", cmdchmod->fname,
                    result ? "file permissions not provided" : fxp_error());
             return false;
         }
@@ -170,11 +171,11 @@ static bool sftpcmdchmod_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packe
         sftpcmd_clear_request(cmd);
 
         if (!result) {
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "set attrs for %s: %s", cmdchmod->fname, fxp_error());
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "set attrs for %s: %s", cmdchmod->fname, fxp_error());
             return false;
         }
 
-        sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "%s: %04o -> %04o", cmdchmod->fname, cmdchmod->oldperms, cmdchmod->newperms);
+        sftp_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "%s: %04o -> %04o", cmdchmod->fname, cmdchmod->oldperms, cmdchmod->newperms);
         return sftpwcm_iterator_next(&cmdchmod->it, sftp, cmd);
     }
     return sftpwcm_iterator_pktin(&cmdchmod->it, sftp, cmd, pktin);

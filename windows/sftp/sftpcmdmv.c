@@ -1,4 +1,5 @@
 #include "sftpcmd.h"
+#include "sftputil.h"
 #include "sftpfxp.h"
 #include "sftpwcm.h"
 
@@ -31,12 +32,12 @@ static void send_rename(const char *fname, Sftp *sftp, SftpCmd *cmd)
 static SftpCmd *sftpcmdmv_init(Sftp *sftp)
 {
     if (sftp->args.argc < 3) {
-        sftpcmd_print(sftp->seat, SEAT_OUTPUT_STDERR, "mv: expects two filenames");
+        sftp_print(sftp->seat, SEAT_OUTPUT_STDERR, "mv: expects two filenames");
         return NULL;
     }
 
     SftpCmdMv *cmdmv = snew(SftpCmdMv);
-    cmdmv->dstfname = sftpcmd_get_absolute_path(sftp->pwd, sftp->args.argv[sftp->args.argc-1]);
+    cmdmv->dstfname = sftp_get_absolute_path(sftp->pwd, sftp->args.argv[sftp->args.argc-1]);
     cmdmv->final_dstfname = NULL;
     sftpwcm_iterator_init(&cmdmv->it, send_rename);
 
@@ -71,9 +72,9 @@ static bool sftpcmdmv_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *
         sftpcmd_clear_request(cmd);
 
         if (result) {
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "%s -> %s", cmdmv->fname, cmdmv->final_dstfname);
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "%s -> %s", cmdmv->fname, cmdmv->final_dstfname);
         } else {
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "mv %s %s: %s", cmdmv->fname, cmdmv->final_dstfname, fxp_error());
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "mv %s %s: %s", cmdmv->fname, cmdmv->final_dstfname, fxp_error());
             return false;
         }
         sfree((void *)cmdmv->final_dstfname);

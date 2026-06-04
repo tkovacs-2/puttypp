@@ -1,4 +1,5 @@
 #include "sftpcmd.h"
+#include "sftputil.h"
 #include "sftpfxp.h"
 #include "sftpcompletion.h"
 
@@ -119,7 +120,7 @@ static void completion_readdir_free(SftpCmd *cmd)
 {
     CompletionReaddir *cmdreaddir = container_of(cmd, CompletionReaddir, cmd);
     if (cmdreaddir->dirh) {
-        sftpcmd_free_fxphandle(cmdreaddir->dirh);
+        sftp_free_fxphandle(cmdreaddir->dirh);
     }
     free_name_list(cmdreaddir);
     sfree(cmdreaddir);

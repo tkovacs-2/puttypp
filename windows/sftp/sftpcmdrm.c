@@ -1,4 +1,5 @@
 #include "sftpcmd.h"
+#include "sftputil.h"
 #include "sftpfxp.h"
 #include "sftpwcm.h"
 
@@ -23,7 +24,7 @@ static void send_remove(const char *fname, Sftp *sftp, SftpCmd *cmd)
 static SftpCmd *sftpcmdrm_init(Sftp *sftp)
 {
     if (sftp->args.argc < 2) {
-        sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: expects a filename", sftp->args.argv[0]);
+        sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: expects a filename", sftp->args.argv[0]);
         return NULL;
     }
 
@@ -55,9 +56,9 @@ static bool sftpcmdrm_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *
         }
         sftpcmd_clear_request(cmd);
         if (result) {
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "%s %s: OK", sftp->args.argv[0], cmdrm->it.cname);
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "%s %s: OK", sftp->args.argv[0], cmdrm->it.cname);
         } else {
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s %s: %s", sftp->args.argv[0], cmdrm->it.cname, fxp_error());
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s %s: %s", sftp->args.argv[0], cmdrm->it.cname, fxp_error());
         }
         return sftpwcm_iterator_next(&cmdrm->it, sftp, cmd);
     }

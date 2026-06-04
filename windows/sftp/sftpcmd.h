@@ -3,11 +3,6 @@
 
 #include "sftpbe.h"
 
-void sftpcmd_print(Seat *seat, SeatOutputType type, const char *text);
-void sftpcmd_printf(Seat *seat, SeatOutputType type, const char *format, ...);
-void sftpcmd_print_pwd(Seat *seat, const char *pwd);
-const char *sftpcmd_get_absolute_path(const char *pwd, const char *name);
-
 typedef struct SftpCmdVtable SftpCmdVtable;
 
 typedef struct SftpCmd SftpCmd;
@@ -19,9 +14,6 @@ struct SftpCmd {
 
 void sftpcmd_set_request(SftpCmd *cmd, int req_type, struct sftp_request *req);
 void sftpcmd_clear_request(SftpCmd *cmd);
-
-struct fxp_handle;
-void sftpcmd_free_fxphandle(struct fxp_handle *handle);
 
 struct sftp_packet;
 

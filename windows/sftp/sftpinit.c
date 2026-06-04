@@ -1,4 +1,5 @@
 #include "sftpcmd.h"
+#include "sftputil.h"
 #include "sftpfxp.h"
 #include "psftp.h"
 
@@ -45,10 +46,10 @@ static bool sftpinit_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *p
     sftpcmd_clear_request(cmd);
 
     if (!sftp->homedir) {
-        sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "Warning: failed to resolve home directory: %s", fxp_error());
+        sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "Warning: failed to resolve home directory: %s", fxp_error());
         sftp->homedir = dupstr(".");
     } else {
-        sftpcmd_print_pwd(sftp->seat, sftp->homedir);
+        sftp_print_pwd(sftp->seat, sftp->homedir);
     }
     sftp->pwd = dupstr(sftp->homedir);
     sftp->lpwd = psftp_getcwd();

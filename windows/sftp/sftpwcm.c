@@ -1,5 +1,6 @@
 #include "sftpwcm.h"
 #include "sftpcmd.h"
+#include "sftputil.h"
 #include "sftpfxp.h"
 #include "psftp.h"
 
@@ -38,7 +39,7 @@ SftpWildcardMatcher *sftpwcm_begin(const char *name, Sftp *sftp, SftpCmd *cmd)
     sfree(tmpdir);
 
     if (!check) {
-        sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "Multiple-level wildcards are not supported in %s", name);
+        sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "Multiple-level wildcards are not supported in %s", name);
         sfree(unwcdir);
         return NULL;
     }
@@ -46,7 +47,7 @@ SftpWildcardMatcher *sftpwcm_begin(const char *name, Sftp *sftp, SftpCmd *cmd)
     swcm = snew(SftpWildcardMatcher);
     swcm->sftp = sftp;
     swcm->cmd = cmd;
-    swcm->cdir = sftpcmd_get_absolute_path(sftp->pwd, unwcdir);
+    swcm->cdir = sftp_get_absolute_path(sftp->pwd, unwcdir);
     swcm->dirh = NULL;
     swcm->names = NULL;
     swcm->wildcard = dupstr(wildcard);
@@ -62,7 +63,7 @@ bool sftpwcm_realpath_recv(SftpWildcardMatcher *swcm, struct sftp_packet *pktin)
     const char *cdir = fxp_realpath_recv(pktin, swcm->cmd->req);
     sftpcmd_clear_request(swcm->cmd);
     if (!cdir) {
-        sftpcmd_printf(swcm->sftp->seat, SEAT_OUTPUT_STDERR, "unable to open %s: %s", swcm->cdir, fxp_error());
+        sftp_printf(swcm->sftp->seat, SEAT_OUTPUT_STDERR, "unable to open %s: %s", swcm->cdir, fxp_error());
         return false;
     }
     sfree((void *)swcm->cdir);
@@ -77,7 +78,7 @@ bool sftpwcm_opendir_recv(SftpWildcardMatcher *swcm, struct sftp_packet *pktin)
     swcm->dirh = fxp_opendir_recv(pktin, swcm->cmd->req);
     sftpcmd_clear_request(swcm->cmd);
     if (!swcm->dirh) {
-        sftpcmd_printf(swcm->sftp->seat, SEAT_OUTPUT_STDERR, "unable to open %s: %s", swcm->cdir, fxp_error());
+        sftp_printf(swcm->sftp->seat, SEAT_OUTPUT_STDERR, "unable to open %s: %s", swcm->cdir, fxp_error());
         return false;
     }
     return true;
@@ -107,7 +108,7 @@ const char *sftpwcm_get_filename(SftpWildcardMatcher *swcm)
             continue;                  /* expected bad filenames */
 
         if (!vet_filename(name->filename)) {
-            sftpcmd_printf(swcm->sftp->seat, SEAT_OUTPUT_STDERR, "ignoring potentially dangerous server-supplied filename '%s'", name->filename);
+            sftp_printf(swcm->sftp->seat, SEAT_OUTPUT_STDERR, "ignoring potentially dangerous server-supplied filename '%s'", name->filename);
             continue;                  /* unexpected bad filename */
         }
 
@@ -129,7 +130,7 @@ bool sftpwcm_readdir_recv(SftpWildcardMatcher *swcm, struct sftp_packet *pktin)
     sftpcmd_clear_request(swcm->cmd);
     if (!swcm->names) {
         if (fxp_error_type() != SSH_FX_EOF) {
-            sftpcmd_printf(swcm->sftp->seat, SEAT_OUTPUT_STDERR, "%s: reading directory: %s", swcm->cdir, fxp_error());
+            sftp_printf(swcm->sftp->seat, SEAT_OUTPUT_STDERR, "%s: reading directory: %s", swcm->cdir, fxp_error());
         }
         return false;
     } else if (swcm->names->nnames == 0) {
@@ -166,7 +167,7 @@ void sftpwcm_free(SftpWildcardMatcher *swcm)
 {
     sfree((void *)swcm->cdir);
     if (swcm->dirh) {
-        sftpcmd_free_fxphandle(swcm->dirh);
+        sftp_free_fxphandle(swcm->dirh);
     }
     if (swcm->names) {
         fxp_free_names(swcm->names);
@@ -192,7 +193,7 @@ static bool sftpwcm_iterator_next_arg(SftpWildcardMatcherIterator* it, Sftp *sft
                 continue;
             }
         } else {
-            it->cname = sftpcmd_get_absolute_path(sftp->pwd, filename);
+            it->cname = sftp_get_absolute_path(sftp->pwd, filename);
             sftp_set_sending_backend(sftp);
             sftpcmd_set_request(cmd, SSH_FXP_REALPATH, fxp_realpath_send(it->cname));
         }
@@ -235,7 +236,7 @@ bool sftpwcm_iterator_pktin(SftpWildcardMatcherIterator* it, Sftp *sftp, SftpCmd
                 it->func(it->cname, sftp, cmd);
                 return true;
             } else {
-                sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "unable to open %s: %s", it->cname, fxp_error());
+                sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "unable to open %s: %s", it->cname, fxp_error());
                 return false;
             }
         }

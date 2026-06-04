@@ -1,4 +1,5 @@
 #include "sftpcmd.h"
+#include "sftputil.h"
 #include "sftpfxp.h"
 #include "sftpwcm.h"
 #include "sftpgetput.h"
@@ -113,7 +114,7 @@ static bool get_file_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *p
         if (cmdget->recurse) {
             if (result && (cmdget->attrs.flags & SSH_FILEXFER_ATTR_PERMISSIONS) && (cmdget->attrs.permissions & 0040000)) {
                 if (file_type(cmdget->outfname) != FILE_TYPE_DIRECTORY && !create_directory(cmdget->outfname)) {
-                    sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: Cannot create local directory", cmdget->outfname);
+                    sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: Cannot create local directory", cmdget->outfname);
                     return false;
                 }
                 sftp_set_sending_backend(sftp);
@@ -133,7 +134,7 @@ static bool get_file_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *p
         cmdget->handle = fxp_opendir_recv(pktin, cmd->req);
         sftpcmd_clear_request(cmd);
         if (!cmdget->handle) {
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: unable to open directory: %s", cmdget->fname, fxp_error());
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: unable to open directory: %s", cmdget->fname, fxp_error());
             return false;
         }
         SftpDir *dir = sftpdirstack_push(&cmdget->dirstack);
@@ -150,7 +151,7 @@ static bool get_file_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *p
         sftpcmd_clear_request(cmd);
         if (names == NULL) {
             if (fxp_error_type() != SSH_FX_EOF) {
-                sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: reading directory: %s", dir->fname, fxp_error());
+                sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: reading directory: %s", dir->fname, fxp_error());
                 cmdget->stop = true;
             }
             send_close(cmdget, sftp);
@@ -165,7 +166,7 @@ static bool get_file_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *p
         for (size_t i = 0; i < names->nnames; i++) {
             if (strcmp(names->names[i].filename, ".") && strcmp(names->names[i].filename, "..")) {
                 if (!vet_filename(names->names[i].filename)) {
-                    sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "ignoring potentially dangerous server-supplied filename '%s'", names->names[i].filename);
+                    sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "ignoring potentially dangerous server-supplied filename '%s'", names->names[i].filename);
                     continue;
                 }
                 dir->ournames[dir->nnames++] = names->names[i].filename;
@@ -229,7 +230,7 @@ static bool get_file_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *p
         cmdget->handle = fxp_open_recv(pktin, cmd->req);
         sftpcmd_clear_request(cmd);
         if (!cmdget->handle) {
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: open for read: %s", cmdget->fname, fxp_error());
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: open for read: %s", cmdget->fname, fxp_error());
             return false;
         }
 
@@ -246,7 +247,7 @@ static bool get_file_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *p
             cmdget->file = open_new_file(cmdget->outfname, GET_PERMISSIONS(cmdget->attrs, -1));
         }
         if (!cmdget->file) {
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "local: unable to open %s", cmdget->outfname);
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "local: unable to open %s", cmdget->outfname);
             send_close(cmdget, sftp);
             cmdget->stop = true;
             return true;
@@ -255,7 +256,7 @@ static bool get_file_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *p
         uint64_t offset = 0;
         if (cmdget->restart) {
             if (seek_file(cmdget->file, 0, FROM_END) == -1) {
-                sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "reget: cannot restart %s - file too large", cmdget->outfname);
+                sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "reget: cannot restart %s - file too large", cmdget->outfname);
                 close_wfile(cmdget->file);
                 cmdget->file = NULL;
                 send_close(cmdget, sftp);
@@ -264,10 +265,10 @@ static bool get_file_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *p
             }
             offset = get_file_posn(cmdget->file);
             if (offset != 0) {
-                sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "reget: restarting at file position %"PRIu64"", offset);
+                sftp_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "reget: restarting at file position %"PRIu64"", offset);
             }
         }
-        sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "remote: %s => local: %s", cmdget->fname, cmdget->outfname);
+        sftp_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "remote: %s => local: %s", cmdget->fname, cmdget->outfname);
         assert(!cmdget->xfer);
         sftpprogressbar_init(&cmdget->progress, offset, (cmdget->attrs.flags & SSH_FILEXFER_ATTR_SIZE) ? cmdget->attrs.size : 0);
         sftp_set_sending_backend(sftp);
@@ -278,7 +279,7 @@ static bool get_file_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *p
         int retd = xfer_download_gotpkt(cmdget->xfer, pktin);
         if (retd <= 0) {
             sftpprogressbar_finish(&cmdget->progress, sftp->seat);
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "error while reading: %s", fxp_error());
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "error while reading: %s", fxp_error());
             if (retd == INT_MIN) {
                 sfree(pktin);
             }
@@ -298,7 +299,7 @@ static bool get_file_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *p
                 if (wlen <= 0) {
                     if (!shown_err) {
                         sftpprogressbar_finish(&cmdget->progress, sftp->seat);
-                        sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "error while writing local file");
+                        sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "error while writing local file");
                         shown_err = true;
                     }
                     cmdget->stop = true;
@@ -414,7 +415,7 @@ static void sftpcmdget_free(SftpCmd *cmd)
         xfer_cleanup(cmdget->xfer);
     }
     if (cmdget->handle) {
-        sftpcmd_free_fxphandle(cmdget->handle);
+        sftp_free_fxphandle(cmdget->handle);
     }
     if (cmdget->file) {
        close_wfile(cmdget->file);

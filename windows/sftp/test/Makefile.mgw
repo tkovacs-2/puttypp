@@ -66,6 +66,7 @@ SOURCES :=  ../../../putty-0.81/windows/utils/filename.c \
             ../../../windows/sftp/sftpcompletion.c \
             ../../../windows/sftp/sftpcompletion_readdir.c \
             ../../../windows/sftp/sftpargs.c \
+            ../../../windows/sftp/sftputil.c \
             ../../../windows/sftp/linenoise/linenoise.c \
             ../../../windows/sftp/psftp.c \
             ../../../putty-0.81/ssh/sftpcommon.c \

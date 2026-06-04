@@ -1,45 +1,8 @@
 #include "sftpcmd.h"
+#include "sftputil.h"
 #include "sftpbe.h"
 #include "sftpfxp.h"
 #include "psftp.h"
-
-void sftpcmd_print(Seat *seat, SeatOutputType type, const char *text)
-{
-    seat_output(seat, type, text, strlen(text));
-    seat_output(seat, type, "\r\n", 2);
-}
-
-void sftpcmd_printf(Seat *seat, SeatOutputType type, const char *format, ...)
-{
-    static char buffer[1024];
-    va_list args;
-
-    va_start(args, format);
-    int length = vsnprintf(buffer, sizeof(buffer), format, args);
-    seat_output(seat, type, buffer, min((int)sizeof(buffer), length));
-    va_end(args);
-    seat_output(seat, type, "\r\n", 2);
-}
-
-void sftpcmd_print_pwd(Seat *seat, const char *pwd)
-{
-    sftpcmd_printf(seat, SEAT_OUTPUT_STDOUT, "remote directory is %s", pwd);
-}
-
-const char *sftpcmd_get_absolute_path(const char *pwd, const char *name)
-{
-    char *fullname;
-    if (*name == '/') {
-        fullname = dupstr(name);
-    } else {
-        if (strcmp(pwd, "/") == 0) {
-            fullname = dupcat(pwd, "", name);
-        } else {
-            fullname = dupcat(pwd, "/", name);
-        }
-    }
-    return fullname;
-}
 
 void sftpcmd_set_request(SftpCmd *cmd, int req_type, struct sftp_request *req)
 {
@@ -59,7 +22,7 @@ void sftpcmd_clear_request(SftpCmd *cmd)
 
 static void print_lpwd(Seat *seat, const char *lpwd)
 {
-    sftpcmd_printf(seat, SEAT_OUTPUT_STDOUT, "local directory is %s", lpwd);
+    sftp_printf(seat, SEAT_OUTPUT_STDOUT, "local directory is %s", lpwd);
 }
 
 static SftpCmd *sftpcmdbye_init(Sftp *sftp)
@@ -71,7 +34,7 @@ static SftpCmd *sftpcmdbye_init(Sftp *sftp)
 static SftpCmd *sftpcmdlcd_init(Sftp *sftp)
 {
     if (sftp->args.argc < 2) {
-        sftpcmd_print(sftp->seat, SEAT_OUTPUT_STDERR, "lcd: expects a local directory name");
+        sftp_print(sftp->seat, SEAT_OUTPUT_STDERR, "lcd: expects a local directory name");
         return NULL;
     }
 
@@ -82,7 +45,7 @@ static SftpCmd *sftpcmdlcd_init(Sftp *sftp)
         errmsg = psftp_lcd((char *)sftp->args.argv[1]);
     }
     if (errmsg) {
-        sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "lcd: unable to change directory: %s", errmsg);
+        sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "lcd: unable to change directory: %s", errmsg);
         sfree(errmsg);
     } else {
         sfree((void *)sftp->lpwd);
@@ -114,7 +77,7 @@ static SftpCmd *sftpcmdlpwd_init(Sftp *sftp)
 
 static SftpCmd *sftpcmdpwd_init(Sftp *sftp)
 {
-    sftpcmd_print_pwd(sftp->seat, sftp->pwd);
+    sftp_print_pwd(sftp->seat, sftp->pwd);
     return NULL;
 }
 
@@ -419,7 +382,7 @@ static SftpCmd *sftpcmdhelp_init(Sftp *sftp)
             seat_output(sftp->seat, SEAT_OUTPUT_STDOUT, t, maxlen+2);
             if (lookup->longhelp == NULL)
                 lookup = lookup_command(lookup->shorthelp);
-            sftpcmd_print(sftp->seat, SEAT_OUTPUT_STDOUT, lookup->shorthelp);
+            sftp_print(sftp->seat, SEAT_OUTPUT_STDOUT, lookup->shorthelp);
         }
         sfree(t);
     } else {
@@ -427,12 +390,12 @@ static SftpCmd *sftpcmdhelp_init(Sftp *sftp)
             const struct SftpCmdLookup *lookup;
             lookup = lookup_command(sftp->args.argv[i]);
             if (!lookup) {
-                sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "help: %s: command not found", sftp->args.argv[i]);
+                sftp_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "help: %s: command not found", sftp->args.argv[i]);
             } else {
                 seat_output(sftp->seat, SEAT_OUTPUT_STDOUT, lookup->name, strlen(lookup->name));
                 if (lookup->longhelp == NULL)
                     lookup = lookup_command(lookup->shorthelp);
-                sftpcmd_print(sftp->seat, SEAT_OUTPUT_STDOUT, lookup->longhelp);
+                sftp_print(sftp->seat, SEAT_OUTPUT_STDOUT, lookup->longhelp);
             }
         }
     }
@@ -442,11 +405,6 @@ static SftpCmd *sftpcmdhelp_init(Sftp *sftp)
 const SftpCmdVtable *sftpcmd_vt_from_name(const char *name) {
     const struct SftpCmdLookup *lookup = lookup_command(name);
     return (lookup ? lookup->vt : NULL);
-}
-
-void sftpcmd_free_fxphandle(struct fxp_handle *handle) {
-    sfree(handle->hstring);
-    sfree(handle);
 }
 
 size_t sftpcmd_get_command_count()

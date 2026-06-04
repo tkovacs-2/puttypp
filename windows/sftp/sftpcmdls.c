@@ -1,4 +1,5 @@
 #include "sftpcmd.h"
+#include "sftputil.h"
 #include "sftpfxp.h"
 #include "psftp.h"
 
@@ -21,12 +22,12 @@ static Seat *list_directory_from_sftp_seat = NULL;
 
 void list_directory_from_sftp_warn_unsorted(void)
 {
-    sftpcmd_print(list_directory_from_sftp_seat, SEAT_OUTPUT_STDERR, "Directory is too large to sort; writing file names unsorted");
+    sftp_print(list_directory_from_sftp_seat, SEAT_OUTPUT_STDERR, "Directory is too large to sort; writing file names unsorted");
 }
 
 void list_directory_from_sftp_print(struct fxp_name *name)
 {
-    sftpcmd_print(list_directory_from_sftp_seat, SEAT_OUTPUT_STDOUT, name->longname);
+    sftp_print(list_directory_from_sftp_seat, SEAT_OUTPUT_STDOUT, name->longname);
 }
 
 static SftpCmd *sftpcmdls_init(Sftp *sftp)
@@ -44,7 +45,7 @@ static SftpCmd *sftpcmdls_init(Sftp *sftp)
             i++;
             continue;
         }
-        sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: unrecognised option '%s'", sftp->args.argv[0], sftp->args.argv[i]);
+        sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: unrecognised option '%s'", sftp->args.argv[0], sftp->args.argv[i]);
         return NULL;
     }
 
@@ -73,7 +74,7 @@ static SftpCmd *sftpcmdls_init(Sftp *sftp)
         check = wc_unescape(tmpdir, unwcdir);
         sfree(tmpdir);
         if (!check) {
-            sftpcmd_print(sftp->seat, SEAT_OUTPUT_STDERR, "Multiple-level wildcards are not supported");
+            sftp_print(sftp->seat, SEAT_OUTPUT_STDERR, "Multiple-level wildcards are not supported");
             sfree(unwcdir);
             return NULL;
         }
@@ -82,7 +83,7 @@ static SftpCmd *sftpcmdls_init(Sftp *sftp)
 
 
     SftpCmdLs *cmdls = snew(SftpCmdLs);
-    cmdls->dir = sftpcmd_get_absolute_path(sftp->pwd, dir);
+    cmdls->dir = sftp_get_absolute_path(sftp->pwd, dir);
     sfree((void *)dir);
     cmdls->wildcard = wildcard;
     cmdls->cdir = NULL;
@@ -103,7 +104,7 @@ static bool sftpcmdls_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *
         cmdls->cdir = fxp_realpath_recv(pktin, cmd->req);
         sftpcmd_clear_request(cmd);
         if (!cmdls->cdir) {
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "ls: unable to open %s: %s", cmdls->dir, fxp_error());
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "ls: unable to open %s: %s", cmdls->dir, fxp_error());
             return false;
         }
         sftp_set_sending_backend(sftp);
@@ -113,7 +114,7 @@ static bool sftpcmdls_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *
         cmdls->dirh = fxp_opendir_recv(pktin, cmd->req);
         sftpcmd_clear_request(cmd);
         if (cmdls->dirh == NULL) {
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "ls: unable to open %s: %s", cmdls->cdir, fxp_error());
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "ls: unable to open %s: %s", cmdls->cdir, fxp_error());
             return false;
         }
         cmdls->ctx = list_directory_from_sftp_new();
@@ -129,7 +130,7 @@ static bool sftpcmdls_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *
                 send_close(sftp, cmd, cmdls->dirh);
                 return true;
             }
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "ls: reading directory %s: %s", cmdls->cdir, fxp_error());
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "ls: reading directory %s: %s", cmdls->cdir, fxp_error());
             send_close(sftp, cmd, cmdls->dirh);
             return true;
         }
@@ -164,7 +165,7 @@ static void sftpcmdls_free(SftpCmd *cmd)
     sfree((void *)cmdls->dir);
     sfree((void *)cmdls->cdir);
     if (cmdls->dirh) {
-        sftpcmd_free_fxphandle(cmdls->dirh);
+        sftp_free_fxphandle(cmdls->dirh);
     }
     if (cmdls->ctx) {
         list_directory_from_sftp_free(cmdls->ctx);

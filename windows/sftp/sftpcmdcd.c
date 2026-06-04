@@ -1,4 +1,5 @@
 #include "sftpcmd.h"
+#include "sftputil.h"
 #include "sftpfxp.h"
 
 typedef struct {
@@ -14,7 +15,7 @@ static SftpCmd *sftpcmdcd_init(Sftp *sftp)
         cmdcd->pwd = dupstr(sftp->homedir);
         cmdcd->get_realpath = false;
     } else {
-        cmdcd->pwd = sftpcmd_get_absolute_path(sftp->pwd, sftp->args.argv[1]);
+        cmdcd->pwd = sftp_get_absolute_path(sftp->pwd, sftp->args.argv[1]);
         cmdcd->get_realpath = true;
     }
     sftpcmd_clear_request(&cmdcd->cmd);
@@ -31,7 +32,7 @@ static bool sftpcmdcd_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *
         struct fxp_handle *dirh = fxp_opendir_recv(pktin, cmd->req);
         sftpcmd_clear_request(cmd);
         if (!dirh) {
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "cd: directory %s: %s", cmdcd->pwd, fxp_error());
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "cd: directory %s: %s", cmdcd->pwd, fxp_error());
             return false;
         }
         sftp_set_sending_backend(sftp);
@@ -56,7 +57,7 @@ static bool sftpcmdcd_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *
     sfree((void *)sftp->pwd);
     sftp->pwd = cmdcd->pwd;
     cmdcd->pwd = NULL;
-    sftpcmd_print_pwd(sftp->seat, sftp->pwd);
+    sftp_print_pwd(sftp->seat, sftp->pwd);
     return false;
 }
 

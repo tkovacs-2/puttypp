@@ -1,4 +1,5 @@
 #include "sftpcmd.h"
+#include "sftputil.h"
 #include "sftpfxp.h"
 
 typedef struct {
@@ -9,7 +10,7 @@ typedef struct {
 
 static void send_mkdir(SftpCmdMkdir *cmdmkdir, Sftp *sftp)
 {
-    cmdmkdir->dir = sftpcmd_get_absolute_path(sftp->pwd, sftp->args.argv[cmdmkdir->current_arg]);
+    cmdmkdir->dir = sftp_get_absolute_path(sftp->pwd, sftp->args.argv[cmdmkdir->current_arg]);
     sftp_set_sending_backend(sftp);
     sftpcmd_set_request(&cmdmkdir->cmd, SSH_FXP_MKDIR, fxp_mkdir_send(cmdmkdir->dir, NULL));
 }
@@ -17,7 +18,7 @@ static void send_mkdir(SftpCmdMkdir *cmdmkdir, Sftp *sftp)
 static SftpCmd *sftpcmdmkdir_init(Sftp *sftp)
 {
     if (sftp->args.argc < 2) {
-        sftpcmd_print(sftp->seat, SEAT_OUTPUT_STDERR, "mkdir: expects a directory");
+        sftp_print(sftp->seat, SEAT_OUTPUT_STDERR, "mkdir: expects a directory");
         return NULL;
     }
 
@@ -35,9 +36,9 @@ static bool sftpcmdmkdir_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packe
     bool result = fxp_mkdir_recv(pktin, cmd->req);
 
     if (result) {
-        sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "mkdir %s: OK", cmdmkdir->dir);
+        sftp_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "mkdir %s: OK", cmdmkdir->dir);
     } else {
-        sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "mkdir %s: %s", cmdmkdir->dir, fxp_error());
+        sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "mkdir %s: %s", cmdmkdir->dir, fxp_error());
     }
     sfree((void *)cmdmkdir->dir);
     cmdmkdir->dir = NULL;

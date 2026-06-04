@@ -1,4 +1,5 @@
 #include "sftpcmd.h"
+#include "sftputil.h"
 #include "sftpfxp.h"
 #include "sftpgetput.h"
 #include "psftp.h"
@@ -46,7 +47,7 @@ static bool wcm_iterator_next_arg(WildcardMatcherIterator* it, Sftp *sftp, SftpC
             it->wcm = begin_wildcard_matching(fname);
             it->cname = wildcard_get_filename(it->wcm);
             if (!it->cname) {
-                sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "%s: nothing matched", fname);
+                sftp_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "%s: nothing matched", fname);
             }
             sfree((void *)fname);
             if (!it->cname) {
@@ -117,7 +118,7 @@ static bool open_files(Sftp *sftp, SftpCmdPut *cmdput)
     assert(!cmdput->file);
     cmdput->file = open_existing_file(cmdput->fname, &cmdput->file_size, NULL, NULL, &permissions);
     if (!cmdput->file) {
-        sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "local: unable to open %s", cmdput->fname);
+        sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "local: unable to open %s", cmdput->fname);
         return false;
     }
     attrs.flags = 0;
@@ -137,7 +138,7 @@ static bool put_file(const char *fname, Sftp *sftp, SftpCmd *cmd)
     assert(cmdput->fname == NULL);
     cmdput->fname = fname;
     if (!cmdput->outfname) {
-        cmdput->outfname = sftpcmd_get_absolute_path(sftp->pwd, stripslashes(fname, true));
+        cmdput->outfname = sftp_get_absolute_path(sftp->pwd, stripslashes(fname, true));
     }
 
     if (cmdput->recurse && file_type(fname) == FILE_TYPE_DIRECTORY) {
@@ -197,7 +198,7 @@ static bool read_dir(Sftp *sftp, SftpCmdPut *cmdput)
     const char *opendir_err;
     DirHandle *dh = open_directory(cmdput->fname, &opendir_err);
     if (!dh) {
-        sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: unable to open directory: %s\n", cmdput->fname, opendir_err);
+        sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: unable to open directory: %s\n", cmdput->fname, opendir_err);
         return false;
     }
     const char *name = read_filename(dh);
@@ -254,7 +255,7 @@ static void transfer(Sftp *sftp, SftpCmdPut *cmdput)
             len = read_from_file(cmdput->file, buffer, sizeof(buffer));
             if (len == -1) {
                 sftpprogressbar_finish(&cmdput->progress, sftp->seat);
-                sftpcmd_print(sftp->seat, SEAT_OUTPUT_STDERR, "error while reading local file");
+                sftp_print(sftp->seat, SEAT_OUTPUT_STDERR, "error while reading local file");
                 cmdput->xfer_err = true;
                 cmdput->stop = true;
                 break;
@@ -284,7 +285,7 @@ static void transfer(Sftp *sftp, SftpCmdPut *cmdput)
 
 static void start_transfer(Sftp *sftp, SftpCmdPut *cmdput, uint64_t offset)
 {
-    sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "local: %s => remote: %s", cmdput->fname, cmdput->outfname);
+    sftp_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "local: %s => remote: %s", cmdput->fname, cmdput->outfname);
     sftpprogressbar_init(&cmdput->progress, offset, cmdput->file_size);
     cmdput->xfer = xfer_upload_init(cmdput->handle, offset);
     cmdput->xfer_err = false;
@@ -311,7 +312,7 @@ static SftpCmd *generic_init(Sftp *sftp, bool restart, bool multiple)
     cmdput->it.disable_wc = !multiple;
     cmdput->fname = NULL;
     if (cmdput->user_outfname) {
-        cmdput->outfname = sftpcmd_get_absolute_path(sftp->pwd, sftp->args.argv[i+1]);
+        cmdput->outfname = sftp_get_absolute_path(sftp->pwd, sftp->args.argv[i+1]);
     } else {
       cmdput->outfname = NULL;
     }
@@ -368,20 +369,20 @@ static bool sftpcmdput_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet 
         bool retd = fxp_fstat_recv(pktin, cmd->req, &attrs);
         sftpcmd_clear_request(cmd);
         if (!retd) {
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "read size of %s: %s", cmdput->outfname, fxp_error());
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "read size of %s: %s", cmdput->outfname, fxp_error());
             cmdput->stop = true;
             send_close(cmdput, sftp);
             return true;
         }
         if (!(attrs.flags & SSH_FILEXFER_ATTR_SIZE)) {
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "read size of %s: size was not given", cmdput->outfname);
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "read size of %s: size was not given", cmdput->outfname);
             cmdput->stop = true;
             send_close(cmdput, sftp);
             return true;
         }
         uint64_t offset = attrs.size;
         if (offset != 0) {
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "reput: restarting at file position %"PRIu64, offset);
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDOUT, "reput: restarting at file position %"PRIu64, offset);
 
             if (seek_file((WFile *)cmdput->file, offset, FROM_START) != 0) {
                 seek_file((WFile *)cmdput->file, 0, FROM_END);    /* *shrug* */
@@ -419,7 +420,7 @@ static bool sftpcmdput_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet 
         bool result = fxp_mkdir_recv(pktin, cmd->req);
         sftpcmd_clear_request(cmd);
         if (!result) {
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: create directory: %s\n", cmdput->outfname, fxp_error());
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: create directory: %s\n", cmdput->outfname, fxp_error());
             return false;
         }
         return read_dir(sftp, cmdput);
@@ -430,7 +431,7 @@ static bool sftpcmdput_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet 
             close_rfile(cmdput->file);
             cmdput->file = NULL;
             cmdput->file_size = 0;
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: open for write: %s", cmdput->outfname, fxp_error());
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: open for write: %s", cmdput->outfname, fxp_error());
             return false;
         }
 
@@ -451,7 +452,7 @@ static bool sftpcmdput_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet 
             }
             if (!cmdput->stop) {
                 sftpprogressbar_finish(&cmdput->progress, sftp->seat);
-                sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "error while writing: %s", fxp_error());
+                sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "error while writing: %s", fxp_error());
                 cmdput->xfer_err = true;
                 cmdput->stop = true;
             }
@@ -480,7 +481,7 @@ static void sftpcmdput_free(SftpCmd *cmd)
         xfer_cleanup(cmdput->xfer);
     }
     if (cmdput->handle) {
-        sftpcmd_free_fxphandle(cmdput->handle);
+        sftp_free_fxphandle(cmdput->handle);
     }
     if (cmdput->file) {
        close_rfile(cmdput->file);

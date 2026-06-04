@@ -1,5 +1,6 @@
 #include "sftpgetput.h"
 #include "sftpcmd.h"
+#include "sftputil.h"
 
 SftpDir *sftpdirstack_top(SftpDirStack *dirstack)
 {
@@ -59,14 +60,14 @@ bool getput_parse_args(Sftp *sftp, int *first_file, bool *recurse)
         } else if (!strcmp(sftp->args.argv[i], "-r")) {
             *recurse = true;
         } else {
-            sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: unrecognised option '%s'", sftp->args.argv[0], sftp->args.argv[i]);
+            sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: unrecognised option '%s'", sftp->args.argv[0], sftp->args.argv[i]);
             return NULL;
         }
         i++;
     }
 
     if (i >= sftp->args.argc) {
-        sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: expects a filename", sftp->args.argv[0]);
+        sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "%s: expects a filename", sftp->args.argv[0]);
         return NULL;
     }
     *first_file = i;

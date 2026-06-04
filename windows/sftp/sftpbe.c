@@ -1,6 +1,7 @@
 #include "sftpbe.h"
 #include "sftpcli.h"
 #include "sftpcmd.h"
+#include "sftputil.h"
 #include "sftpfxp.h"
 #include "sftpcompletion.h"
 
@@ -40,7 +41,7 @@ static void execute(Sftp *sftp) {
     }
     const SftpCmdVtable *vt = sftpcmd_vt_from_name(sftp->args.argv[0]);
     if (vt == NULL) {
-        sftpcmd_printf(sftp->seat, SEAT_OUTPUT_STDERR, "Unknown command: %s", sftp->args.argv[0]);
+        sftp_printf(sftp->seat, SEAT_OUTPUT_STDERR, "Unknown command: %s", sftp->args.argv[0]);
         sftpargs_free(&sftp->args);
         return;
     }
