@@ -26,6 +26,12 @@ static void wintw_draw_text_find_match(
 {
     static truecolour match_tc = {{true, 0, 0, 0}, {true, 255, 241, 0}};
 
+#if 0
+    if (attr & ATTR_ERASE) {
+        attr = (attr & ~ATTR_BGMASK) | (OSC4_COLOUR_red << ATTR_BGSHIFT);
+    }
+#endif
+
     if (!find_match_mask.dirty || (attr & TDATTR_MASK & (~TATTR_COMBINING))) {
         wintw_draw_text(tw, x, y, text, len, attr, lattr, tc);
         return;

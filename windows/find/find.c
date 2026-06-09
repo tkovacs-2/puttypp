@@ -144,8 +144,7 @@ bool find_above_display(Terminal *term, const wchar_t *pattern, int pattern_len,
     while (true) {
         find_iterator_wrapup(&iter);
         int r = iter.row;
-        find_iterator_load(&iter);
-        if (find_iterator_get(&iter) == NULL) {break;}
+        if (!find_iterator_load(&iter)) {break;}
         kmp_search(&iter, ctx, set_above_display_match, &result);
         if (result.found) {
             find_iterator_unload(&iter);
@@ -164,9 +163,7 @@ bool find_below_display(Terminal *term, const wchar_t *pattern, int pattern_len,
     FindIterator iter;
     find_iterator_init(term, &iter, term->rows);
     find_iterator_wrapup(&iter);
-    while (true) {
-        find_iterator_load(&iter);
-        if (find_iterator_get(&iter) == NULL) {break;}
+    while (find_iterator_load(&iter)) {
         kmp_search(&iter, ctx, set_below_display_match, &result);
         if (result.found) {
             find_iterator_unload(&iter);

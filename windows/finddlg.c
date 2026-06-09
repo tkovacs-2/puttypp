@@ -15,6 +15,7 @@ static int initial_size = 0;
 static int zoomed_size_dpi = 0;
 static int normal_size_dpi = 0;
 static int initial_size_dpi = 0;
+static bool wm_size_pin = false;
 static int frame_top_offset = 0;
 static bool disable_notification = false;
 
@@ -48,16 +49,23 @@ static void pin_to_frame(HWND hwnd)
     SetWindowPos(hwnd, NULL, dlg_left, pin_to.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
-static bool size_to_frame(HWND hwnd)
+static void size_to_frame(HWND hwnd)
 {
     int size = (IsZoomed(frame_hwnd) && zoomed_size_dpi > 0) ? zoomed_size_dpi : normal_size_dpi;
-    if (size <= 0) {
-        return false;
-    }
     RECT r;
+    GetClientRect(frame_hwnd, &r);
+    int frame_size = r.right - r.left;
+    if (size > frame_size) {
+        size = frame_size;
+    }
     GetWindowRect(hwnd, &r);
+    wm_size_pin = false;
     SetWindowPos(hwnd, NULL, 0, 0, size, r.bottom - r.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-    return true;
+    if (wm_size_pin) {
+        wm_size_pin = false;
+    } else {
+        pin_to_frame(hwnd);
+    }
 }
 
 static int dpi_scale(int x)
@@ -76,6 +84,15 @@ static void store_initial_size(HWND hwnd)
     GetWindowRect(hwnd, &r);
     initial_size_dpi = r.right - r.left;
     initial_size = dpi_inverse_scale(initial_size_dpi);
+    if (normal_size > 0) {
+        normal_size_dpi = dpi_scale(normal_size);
+    } else {
+        normal_size_dpi = initial_size_dpi;
+        normal_size = initial_size;
+    }
+    if (zoomed_size > 0) {
+        zoomed_size_dpi = dpi_scale(zoomed_size);
+    }
 }
 
 static void store_size(HWND hwnd) {
@@ -168,12 +185,11 @@ static INT_PTR CALLBACK finddlg_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
     case WM_INITDIALOG: {
         SetWindowLong(hwnd, GWL_EXSTYLE, GetWindowLong(hwnd, GWL_EXSTYLE) | WS_EX_LAYERED);
         apply_alpha(hwnd, GetForegroundWindow() == hwnd);
+        dialog_dpi_info.x = 0;
         init_window_dpi_info(hwnd, &dialog_dpi_info);
         anchor_init(hwnd, &dialog_dpi_info, anchor_info, anchor_info_size);
         store_initial_size(hwnd);
-        if (!size_to_frame(hwnd)) {
-            pin_to_frame(hwnd);
-        }
+        size_to_frame(hwnd);
         return FALSE;
     }
     case WM_GETMINMAXINFO: {
@@ -207,15 +223,14 @@ static INT_PTR CALLBACK finddlg_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
     case WM_EXITSIZEMOVE:
         in_sizemove = false;
         store_size(hwnd);
-        anchor_apply(hwnd, anchor_info, anchor_info_size);
         pin_to_frame(hwnd);
         return FALSE;
     case WM_SIZE:
-        store_size(hwnd);
         anchor_apply(hwnd, anchor_info, anchor_info_size);
         if (in_sizemove) {
             return FALSE;
         }
+        wm_size_pin = true;
         pin_to_frame(hwnd);
         return FALSE;
     case WM_ACTIVATE:
@@ -323,16 +338,13 @@ void finddlg_pin_to_frame(int top_offset)
     pin_to_frame(finddlg_hwnd);
 }
 
-void finddlg_size_to_frame()
+void finddlg_size_to_frame(int top_offset)
 {
+    frame_top_offset = top_offset;
     if (finddlg_hwnd == NULL) {
         return;
     }
-    if (!size_to_frame(finddlg_hwnd)) {
-        normal_size = initial_size;
-        normal_size_dpi = initial_size_dpi;
-        size_to_frame(finddlg_hwnd);
-    }
+    size_to_frame(finddlg_hwnd);
 }
 
 int finddlg_get_text(WCHAR *buffer, int buffer_chars)

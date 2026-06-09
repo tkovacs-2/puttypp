@@ -42,7 +42,7 @@ int main()
     Terminal *term = new_trem_for_test(&ucsdata);
 
     int failures = 0;
-//    failures += test_kmp(term);
+    failures += test_kmp(term);
     failures += test_find(term);
 
     term_free(term);

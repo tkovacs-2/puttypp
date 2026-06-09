@@ -2,6 +2,27 @@
 #include "terminal_public.h"
 #include "finditerator.h"
 
+static inline bool is_erase_char(termchar *tc) {
+    return (tc->attr & ATTR_ERASE) != 0;
+}
+
+static bool check_line_end(FindIterator *iter, int col) {
+    if (!is_erase_char(iter->line->chars + col)) {
+        return false;
+    }
+    assert(!iter->next_non_erase);
+    col++;
+    while (col < iter->line->cols) {
+        if (is_erase_char(iter->line->chars + col)) {
+            col++;
+        } else {
+            iter->next_non_erase = iter->line->chars + col;
+            return false;
+        }
+    }
+    return true;
+}
+
 static termline *get_line(Terminal *term, int row) {
     assert(row+term->disptop < term->rows);
     return term_lineptr(term, row+term->disptop);
@@ -12,11 +33,11 @@ static void unload_line(FindIterator *iter) {
     iter->line = NULL;
     iter->shift = 0;
     iter->current = NULL;
+    iter->next_non_erase = NULL;
 }
 
 static void set_current_character(FindIterator *iter) {
     iter->current = &iter->line->chars[iter->col];
-    assert(!(iter->current->attr&ATTR_ERASE));
 }
 
 static int advance_column(termline *line, int col) {
@@ -25,6 +46,9 @@ static int advance_column(termline *line, int col) {
     return col;
 }
 
+// The assumption is that if the line has LATTR_WRAPPED flag,
+// the next one must have some character other then erase.
+// If the opposite still happens we will treat the line as a space character in first column.
 static bool advance_wrapped_row(Terminal *term, FindIterator *iter) {
     bool wrapped = iter->line->lattr & LATTR_WRAPPED;
     term_unlineptr(iter->line);
@@ -47,6 +71,7 @@ void find_iterator_init(Terminal *term, FindIterator *iter, int row) {
     iter->line = NULL;
     iter->col = 0;
     iter->current = NULL;
+    iter->next_non_erase = NULL;
 }
 
 void find_iterator_mark(FindIterator *iter, FindIterator *mark) {
@@ -57,6 +82,7 @@ void find_iterator_mark(FindIterator *iter, FindIterator *mark) {
     mark->line = NULL;
     mark->col = iter->col;
     mark->current = NULL;
+    mark->next_non_erase = NULL;
 }
 
 termchar *find_iterator_get(FindIterator *iter) {
@@ -84,25 +110,26 @@ unsigned long find_iterator_get_chr(FindIterator *iter) {
         case CSET_OEMCP:
           uc = iter->term->ucsdata->unitab_oemcp[uc & 0xFF];
           break;
-      }
+    }
     return uc;
 }
 
-void find_iterator_load(FindIterator *iter) {
+bool find_iterator_load(FindIterator *iter) {
     assert(iter->line == NULL && iter->current == NULL);
     if (iter->row+iter->term->disptop >= iter->term->rows ||
         iter->row+iter->term->disptop < -term_sblines(iter->term)) {
-        return;
+        return false;
     }
     iter->line = get_line(iter->term, iter->row);
     iter->shift = (iter->line->trusted ? TRUST_SIGIL_WIDTH : 0);
-    if (iter->line->chars[iter->col].attr & ATTR_ERASE) {
+    if (check_line_end(iter, iter->col)) {
         unload_line(iter);
         iter->row++;
         assert(iter->col == 0);
-        return;
+        return true;
     }
     set_current_character(iter);
+    return true;
 }
 
 void find_iterator_wrapup(FindIterator *iter) {
@@ -135,14 +162,23 @@ void find_iterator_next(FindIterator *iter) {
         iter->current = current + current->cc_next;
         return;
     }
+    if (iter->next_non_erase) {
+        iter->col++;
+        set_current_character(iter);
+        if (iter->current == iter->next_non_erase) {
+            iter->next_non_erase = NULL;
+        }
+        return;
+    }
 
     termline *line = iter->line;
     int col = advance_column(line, iter->col);
-    if (col >= line->cols || (line->chars[col].attr & ATTR_ERASE)) {
+    if (col >= line->cols || check_line_end(iter, col)) {
         if (advance_wrapped_row(iter->term, iter)) {
             set_current_character(iter);
         } else {
             iter->current = NULL;
+            iter->next_non_erase = NULL;
         }
         return;
     }

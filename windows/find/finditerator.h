@@ -15,6 +15,7 @@ typedef struct FindIterator {
     Terminal *term;
     termline *line;
     termchar *current;
+    termchar *next_non_erase;
 } FindIterator;
 
 void find_iterator_init(Terminal *term, FindIterator *iter, int row);
@@ -23,7 +24,7 @@ void find_iterator_mark(FindIterator *iter, FindIterator *mark);
 termchar *find_iterator_get(FindIterator *iter);
 unsigned long find_iterator_get_chr(FindIterator *iter);
 
-void find_iterator_load(FindIterator *iter);
+bool find_iterator_load(FindIterator *iter);
 void find_iterator_wrapup(FindIterator *iter);
 void find_iterator_unload(FindIterator *iter);
 

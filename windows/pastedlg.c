@@ -92,6 +92,7 @@ static void save_size(HWND hwnd) {
 static INT_PTR ClipProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
       case WM_INITDIALOG: {
+        dialog_dpi_info.x = 0;
         init_window_dpi_info(hwnd, &dialog_dpi_info);
         SetWindowLongPtr(hwnd, DWLP_USER, lParam);
         anchor_init(hwnd, &dialog_dpi_info, anchor_info, 3);

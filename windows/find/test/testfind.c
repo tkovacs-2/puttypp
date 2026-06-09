@@ -42,19 +42,34 @@ static int line_fill_ascii(Terminal *term, int y, const char *s)
     termline *line = term_lineptr(term, y);
     int col = 0;
     while (*s) {
-        if (col == term->cols) {
+        if (col >= term->cols) {
             line->lattr |= LATTR_WRAPPED;
             term_unlineptr(line);
             y++;
             line = term_lineptr(term, y);
             col = 0;
         }
-        termchar *c = &line->chars[col++];
-        c->chr = (unsigned char)*s++;
-        c->attr &= ~ATTR_ERASE;
+        termchar *c = &line->chars[col];
+        if (*s == '\t') {
+            col += 2;
+        } else {
+            c->chr = (unsigned char)*s;
+            c->attr &= ~ATTR_ERASE;
+            col++;
+        }
+        s++;
     }
     term_unlineptr(line);
     return y+1;
+}
+
+static void clear_term_line(Terminal *term, int row)
+{
+    termline *line = term_lineptr(term, row);
+    for (int c = 0; c < line->cols; c++) {
+        line->chars[c].chr = term->basic_erase_char.chr;
+    }
+    term_unlineptr(line);
 }
 
 static void init_term_lines(Terminal *term, int rows, int cols)
@@ -281,9 +296,9 @@ int test_find(Terminal *term)
     {
         printf("\n--- find_display: horizontally resized terminal ---\n");
         init_term_lines(term, 8, 5);
-        line_fill_ascii(term, 1, "b  XYZ");
+        line_fill_ascii(term, 1, "b\tXYZ");
         line_fill_ascii(term, 3, "dXYZXYZ");
-        line_fill_ascii(term, 5, "f  XYZ");
+        line_fill_ascii(term, 5, "f\tXYZ");
         finalize_term_lines(term, 4, -2);
 
         FindMatchMask mask;
@@ -358,6 +373,22 @@ int test_find(Terminal *term)
     }
 
     {
+        printf("\n--- find_display: tab with overlapped matches ---\n");
+        init_term_lines(term, 2, 8);
+        line_fill_ascii(term, 0, "\tXXX");
+        line_fill_ascii(term, 1, "  XXX");
+
+        FindMatchMask mask;
+        find_match_mask_init(&mask);
+        find_match_mask_alloc(&mask, term->rows, term->cols);
+        find_display(term, L"XX", 2, false, false, &mask);
+        unsigned char exp[] = {0, 0, 1, 1, 1, 0, 0, 0,
+                               0, 0, 1, 1, 1, 0, 0, 0};
+        failures += mask_cells_ok(&mask, exp, true);
+        find_match_mask_free(&mask);
+    }
+
+    {
         printf("\n--- find_above_display: wrapped line fully above, both rows contain XYZ ---\n");
         init_term_lines(term, 8, 5);
         line_fill_ascii(term, 0, "xxXYZyyXYZ");
@@ -407,6 +438,16 @@ int test_find(Terminal *term)
     }
 
     {
+        printf("\n--- find_above_display: match above display area but separated by empty lines ---\n");
+        init_term_lines(term, 8, 5);
+        line_fill_ascii(term, 0, "aaXYZ");
+        clear_term_line(term, 1);
+        line_fill_ascii(term, 5, "bbXYZ");
+        finalize_term_lines(term, 3, 0);
+        failures += check_find_above_display(term, L"XYZ", 3, true, -5);
+    }
+
+    {
         printf("\n--- find_below_display: wrapped line fully below, both rows contain XYZ ---\n");
         init_term_lines(term, 8, 5);
         line_fill_ascii(term, 3, "xxXYZyyXYZ");
@@ -453,6 +494,16 @@ int test_find(Terminal *term)
         line_fill_ascii(term, 4, "bbXYZ");
         finalize_term_lines(term, 3, -5);
         failures += check_find_below_display(term, L"XYZ", 3, true, 3);
+    }
+
+    {
+        printf("\n--- find_below_display: match below display area but separated by empty lines ---\n");
+        init_term_lines(term, 8, 5);
+        line_fill_ascii(term, 0, "aaXYZ");
+        clear_term_line(term, 4);
+        line_fill_ascii(term, 5, "bbXYZ");
+        finalize_term_lines(term, 3, -5);
+        failures += check_find_below_display(term, L"XYZ", 3, true, 5);
     }
 
     return failures;
