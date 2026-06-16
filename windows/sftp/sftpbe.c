@@ -249,6 +249,8 @@ static char *sftpbe_init(const BackendVtable *vt, Seat *seat,
 
     prepare_conf(sftp, conf);
 
+    *backend_handle = &sftp->backend;
+
     char *err = backend_init(&ssh_backend,
                        &sftp->sshseat, &sftp->ssh, logctx, sftp->ssh_conf,
                        host,
@@ -260,7 +262,6 @@ static char *sftpbe_init(const BackendVtable *vt, Seat *seat,
     }
     sftp->backend.interactor = sftp->ssh->interactor;
 
-    *backend_handle = &sftp->backend;
     return NULL;
 }
 
