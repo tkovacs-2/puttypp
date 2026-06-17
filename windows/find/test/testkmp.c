@@ -6,6 +6,7 @@
 #include <wchar.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <assert.h>
 
 #define MATCH_COLLECTOR_CAPACITY 256
 
@@ -38,6 +39,11 @@ static int matches_equal(const Match *a, const Match *b)
            a->end_row == b->end_row && a->end_col == b->end_col;
 }
 
+static bool is_combining_char(unsigned long uc)
+{
+    return uc >= 0x0300UL && uc <= 0x036FUL;
+}
+
 static int run_test(const char *name, const unsigned long *haystack, int hlen,
                     const wchar_t *needle, int nlen,
                     const Match *expected, int expected_count,
@@ -55,23 +61,44 @@ static int run_test(const char *name, const unsigned long *haystack, int hlen,
     term_pwron(term, true);
     term_clrsb(term);
 
-    for (int row = 0; row < term->rows; row++) {
-        int start = row*term->cols;
-        int len_on_line = hlen-start;
-        if (len_on_line > term->cols) {
-            len_on_line = term->cols;
+    int row = 0, col = -1;
+    termline *ln = term_lineptr(term, row);
+    for (int pos = 0; pos < hlen; pos++) {
+        unsigned long uc = haystack[pos];
+        if (is_combining_char(uc)) {
+            assert(col >= 0);
+            int idx = col;
+            while (ln->chars[idx].cc_next) {
+                idx += ln->chars[idx].cc_next;
+            }
+            if (ln->cc_free == 0) {
+                size_t sz = (size_t)ln->size;
+                sgrowarray(ln->chars, sz, (size_t)ln->size);
+                ln->cc_free = ln->size;
+                ln->size = (int)sz;
+            }
+            ln->chars[idx].cc_next = ln->cc_free - idx;
+            memset(&ln->chars[ln->cc_free], 0, sizeof(termchar));
+            ln->chars[ln->cc_free].chr = uc;
+            ln->cc_free++;
+        } else {
+            col++;
+            if (col >= ln->cols) {
+                row++;
+                if (row < term->rows) {
+                    ln->lattr |= LATTR_WRAPPED;
+                } else {
+                    break;
+                }
+                col = 0;
+                term_unlineptr(ln);
+                ln = term_lineptr(term, row);
+            }
+            ln->chars[col].chr = uc;
+            ln->chars[col].attr &= ~ATTR_ERASE;
         }
-        termline *ln = term_lineptr(term, row);
-        if (row+1 < term->rows) {
-            ln->lattr |= LATTR_WRAPPED;
-        }
-        for (int i = 0; i < len_on_line; i++) {
-            termchar *c = &ln->chars[i];
-            c->chr = haystack[start + i];
-            c->attr &= ~ATTR_ERASE;
-        }
-        term_unlineptr(ln);
     }
+    term_unlineptr(ln);
 
     KmpContext *ctx = kmp_prepare_context(needle, nlen, ignore_case, whole_word);
     MatchCollector mc = {0};
@@ -505,6 +532,51 @@ int test_kmp(Terminal *term)
                              (int)(sizeof needle / sizeof needle[0]),
                              NULL, 0, 0, false, true, term);
     }
+
+    {
+        unsigned long haystack[] = { 'a', 'e', 0x0301, 'b' };
+        wchar_t needle[] = { L'e', (wchar_t)0x0301, L'b' };
+        Match expected[] = { { 0, 1, 0, 2 } };
+        failures += run_test("cc_next: KMP matches e + U+0301 + b across overflow combining slot", haystack,
+                             (int)(sizeof haystack / sizeof haystack[0]), needle,
+                             (int)(sizeof needle / sizeof needle[0]),
+                             expected, (int)(sizeof expected / sizeof expected[0]),
+                             5, false, false, term);
+    }
+
+    {
+        unsigned long haystack[] = { 'a', 'e', 0x0301, 'b' };
+        wchar_t needle[] = { L'e', L'b' };
+        failures += run_test("cc_next: e then b does not skip combining U+0301 between base and b", haystack,
+                             (int)(sizeof haystack / sizeof haystack[0]), needle,
+                             (int)(sizeof needle / sizeof needle[0]),
+                             NULL, 0, 5, false, false, term);
+    }
+
+    {
+        unsigned long haystack[] = { 'a', 'e', 0x0301, 'b' };
+        wchar_t needle[] = { L'e', (wchar_t)0x0301 };
+        Match expected[] = { { 0, 1, 0, 1 } };
+        failures += run_test("cc_next: KMP matches e + U+0301 within one display column", haystack,
+                             (int)(sizeof haystack / sizeof haystack[0]), needle,
+                             (int)(sizeof needle / sizeof needle[0]),
+                             expected, (int)(sizeof expected / sizeof expected[0]),
+                             5, false, false, term);
+    }
+
+    {
+        unsigned long haystack[] = { 'a', 'b', 'c', 'e', 0x0301, 0x0302, 'd', 'e', 0x0301, 0x0302 };
+        wchar_t needle[] = { L'e', (wchar_t)0x0301, (wchar_t)0x0302 };
+        Match expected[] = { { 0, 3, 0, 3 },
+                             { 1, 1, 1, 1 } };
+        failures += run_test(
+            "cc_next: KMP matches multiple combining characters and wrapped line",
+            haystack, (int)(sizeof haystack / sizeof haystack[0]), needle,
+            (int)(sizeof needle / sizeof needle[0]),
+            expected, (int)(sizeof expected / sizeof expected[0]),
+            4, false, false, term);
+    }
+
 
     return failures;
 }
