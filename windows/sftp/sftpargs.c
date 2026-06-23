@@ -1,7 +1,7 @@
 #include "sftpargs.h"
 #include "puttymem.h"
 
-void sftpargs_parse(char *cmdline, SftpArgs *args, bool completion)
+void sftpargs_parse(char *cmdline, SftpArgs *args, bool completion, bool *has_open_quote)
 {
     char *p = cmdline;
     char **words = NULL;
@@ -19,10 +19,10 @@ void sftpargs_parse(char *cmdline, SftpArgs *args, bool completion)
         /* Parse the command line into words. The syntax is:
         *  - double quotes are removed, but cause spaces within to be
         *    treated as non-separating.
-        *  - a double-doublequote pair is a literal double quote, inside
+        *  - a backslashed doublequote is a literal double quote, inside
         *    _or_ outside quotes. Like this:
         *
-        *      firstword "second word" "this has ""quotes"" in" and""this""
+        *      firstword "second word" "this has \"quotes\" in" and\"this\"
         *
         * becomes
         *
@@ -31,9 +31,9 @@ void sftpargs_parse(char *cmdline, SftpArgs *args, bool completion)
         *      >this has "quotes" in<
         *      >and"this"<
         */
-        char *p0 = p;
         char *q, *r;
-        bool quoting;
+        bool quoting = false;
+        bool has_space_after = false;
         while (1) {
             /* skip whitespace */
             while (*p && (*p == ' '))
@@ -44,25 +44,31 @@ void sftpargs_parse(char *cmdline, SftpArgs *args, bool completion)
             /* mark start of word */
             q = r = p;                 /* q sits at start, r writes word */
             quoting = false;
+            has_space_after = false;
             while (*p) {
                 if (!quoting && (*p == ' '))
                     break;                     /* reached end of word */
-                else if (*p == '"' && p[1] == '"')
+                else if (*p == '\\' && p[1] == '"')
                     p += 2, *r++ = '"';    /* a literal quote */
                 else if (*p == '"')
                     p++, quoting = !quoting;
                 else
                     *r++ = *p++;
             }
-            if (*p)
+            if (*p) {
+                has_space_after = true;
                 p++;                   /* skip over the whitespace */
+            }
             *r = '\0';
             sgrowarray(words, wordssize, nwords);
             words[nwords++] = q;
         }
-        if (completion && (p == p0 || p[-1] == ' ' || p[-1] == 0)) {
-            sgrowarray(words, wordssize, nwords);
-            words[nwords++] = p;
+        if (completion) {
+            *has_open_quote = quoting;
+            if (has_space_after) {
+                sgrowarray(words, wordssize, nwords);
+                words[nwords++] = p;
+            }
         }
     }
     args->argv = (const char * const *)words;

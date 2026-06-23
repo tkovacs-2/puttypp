@@ -71,6 +71,10 @@ static void tc_cd(TestLocal *tl, TestRemote *tr)
     testlocal_execute(tl, "ls test");
     testremote_process(tr);
     ASSERT_TRUE(testlocal_find_output(&tl->error, "no such file or directory", false));
+
+    testlocal_execute(tl, "cd");
+    testremote_process(tr);
+    ASSERT_TRUE(testlocal_find_output(&tl->output, "remote directory is /sftp", true));
 }
 
 static void tc_lcd(TestLocal *tl, TestRemote *tr)
@@ -164,7 +168,6 @@ static void tc_mput(TestLocal *tl, TestRemote *tr)
     testremote_process(tr);
     testlocal_execute(tl, "mput -r *.html test* x/*.html");
     testremote_process(tr);
-
     ASSERT_TRUE(testremote_check_file(tr, "w/1.html"));
     ASSERT_TRUE(testremote_check_file(tr, "w/2.html"));
     ASSERT_TRUE(testremote_check_file(tr, "w/test1/1.txt"));
@@ -174,6 +177,12 @@ static void tc_mput(TestLocal *tl, TestRemote *tr)
     ASSERT_TRUE(testremote_check_file(tr, "w/test2/4.html"));
     ASSERT_TRUE(testremote_check_file(tr, "w/test3/5.txt"));
     ASSERT_TRUE(testremote_check_file(tr, "w/7.html"));
+
+    testremote_set_clean(tr);
+    testlocal_execute(tl, "mput .*");
+    testremote_process(tr);
+    ASSERT_TRUE(testlocal_find_output(&tl->output, "nothing matched", false));
+    ASSERT_FALSE(testremote_is_dirty(tr));
 }
 
 static void tc_reput(TestLocal *tl, TestRemote *tr)
@@ -305,9 +314,10 @@ static void tc_reget(TestLocal *tl, TestRemote *tr)
 
 static void tc_mkdir(TestLocal *tl, TestRemote *tr)
 {
-    testlocal_execute(tl, "mkdir /sftp/test");
+    testlocal_execute(tl, "mkdir /sftp/test test\\\"2\\\"");
     testremote_process(tr);
     ASSERT_TRUE(testremote_check_dir(tr, "test"));
+    ASSERT_TRUE(testremote_check_dir(tr, "test\"2\""));
 
     testremote_add_dir(tr, "test/x");
     testlocal_execute(tl, "mkdir test/x");
@@ -556,6 +566,58 @@ static void tc_completion(TestLocal *tl, TestRemote *tr)
     ASSERT_TRUE(testlocal_find_output(&tl->output, "sftp> get /usr/", false));
     completion_cancel_line(sftp);
 
+    backend_send(&sftp->backend, " # cd ", 6);
+    testlocal_clear_output(tl);
+    completion_send(sftp, tr, "\x09", 1);
+    ASSERT_TRUE(testlocal_empty_output(&tl->output));
+    completion_cancel_line(sftp);
+
+    testlocal_allow_cli_output(tl, false);
+}
+
+static void tc_completion_quotes(TestLocal *tl, TestRemote *tr)
+{
+    Sftp *sftp = container_of(tl->sftp, Sftp, backend);
+    testremote_add_file(tr, "/usr/bin/ls", 0);
+    testremote_add_dir(tr, "dir with space");
+    testremote_add_file(tr, "d\"ir with quote and space", 0);
+    testlocal_add_file(tl, "file with space", 0);
+    testlocal_allow_cli_output(tl, true);
+
+    testlocal_clear_output(tl);
+    completion_send(sftp, tr, "get di\x09", 7);
+    ASSERT_TRUE(testlocal_find_output(&tl->output, "sftp> get \"dir with space\"/", false));
+    completion_cancel_line(sftp);
+
+    testlocal_clear_output(tl);
+    completion_send(sftp, tr, "get d\\\"i\x09", 9);
+    ASSERT_TRUE(testlocal_find_output(&tl->output, "sftp> get \"d\\\"ir with quote and space\"", false));
+    completion_cancel_line(sftp);
+
+    testlocal_clear_output(tl);
+    completion_send(sftp, tr, "put fi\x09", 7);
+    ASSERT_TRUE(testlocal_find_output(&tl->output, "sftp> put \"file with space\"", false));
+    completion_cancel_line(sftp);
+
+    testlocal_clear_output(tl);
+    completion_send(sftp, tr, "put fi\"le w\"i\x09", 14);
+    ASSERT_TRUE(testlocal_find_output(&tl->output, "sftp> put fi\"le w\"\"ith space\"", false));
+    completion_cancel_line(sftp);
+
+    printf("\n");
+    testlocal_execute(tl, "cd /usr/bin");
+    testremote_process(tr);
+
+    testlocal_clear_output(tl);
+    completion_send(sftp, tr, "get \x09", 5);
+    ASSERT_TRUE(testlocal_find_output(&tl->output, "sftp> get ls", false));
+    completion_cancel_line(sftp);
+
+    testlocal_clear_output(tl);
+    completion_send(sftp, tr, "get  \"l\x09", 8);
+    ASSERT_TRUE(testlocal_find_output(&tl->output, "sftp> get  \"ls", false));
+    completion_cancel_line(sftp);
+
     testlocal_allow_cli_output(tl, false);
 }
 
@@ -630,6 +692,15 @@ static void tc_completion_paging(TestLocal *tl, TestRemote *tr)
     ASSERT_FALSE(testlocal_find_output(&tl->output, "p4age  p5age", true));
     ASSERT_TRUE(testlocal_find_output(&tl->output, "sftp> put p", false));
     completion_cancel_line(sftp);
+
+    testlocal_clear_output(tl);
+    completion_send(sftp, tr, "put p\x09", 6);
+    completion_tab_open_paging(sftp);
+    ASSERT_TRUE(testlocal_find_output(&tl->output, "p0age", true));
+    ASSERT_TRUE(testlocal_find_output(&tl->output, "p1age", true));
+    ASSERT_TRUE(testlocal_find_output(&tl->output, "p2age\\", true));
+    completion_cancel_line(sftp);
+
     testlocal_allow_cli_output(tl, false);
 }
 
@@ -654,6 +725,7 @@ void testsuite_sftpbe()
     ADD_TESTCASE(tc_connection_fatal)
     ADD_TESTCASE(tc_pwdline)
     ADD_TESTCASE(tc_completion)
+    ADD_TESTCASE(tc_completion_quotes)
     ADD_TESTCASE(tc_completion_paging)
     END_TESTSUITE()
 

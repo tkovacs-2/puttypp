@@ -57,6 +57,7 @@ static bool sftpcmdmkdir_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packe
 {
     SftpCmdMkdir *cmdmkdir = container_of(cmd, SftpCmdMkdir, cmd);
     bool result = fxp_mkdir_recv(pktin, cmd->req);
+    sftpcmd_clear_request(&cmdmkdir->cmd);
 
     SftpCmdMkdirArg *arg = &cmdmkdir->argv[cmdmkdir->current_arg];
     if (result) {

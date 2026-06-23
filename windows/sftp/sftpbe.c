@@ -397,7 +397,7 @@ static void sftpbe_send(Backend *be, const char *buf, size_t len)
     if (state == SFTPCLISTATE_FINISH_CANCEL) {
         sftpcli_start(sftp->cli, sftp->width, sftp->lpwd, sftp->pwd);
     } else if (state == SFTPCLISTATE_FINISH) {
-        sftpargs_parse(sftpcli_copy_line(sftp->cli, false), &sftp->args, false);
+        sftpargs_parse(sftpcli_copy_line(sftp->cli, false), &sftp->args, false, NULL);
         execute(sftp);
         if (!sftp->cmd) {
             sftpcli_start(sftp->cli, sftp->width, sftp->lpwd, sftp->pwd);

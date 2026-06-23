@@ -10,7 +10,7 @@ struct SftpArgs {
     char *cmdline;
 };
 
-void sftpargs_parse(char *cmdline, SftpArgs *args, bool completion);
+void sftpargs_parse(char *cmdline, SftpArgs *args, bool completion, bool *has_open_quote);
 void sftpargs_free(SftpArgs *args);
 
 #endif

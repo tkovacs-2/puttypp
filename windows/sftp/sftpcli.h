@@ -23,5 +23,6 @@ SftpCliState sftpcli_feed(SftpCli *cli, const char *buf, size_t len);
 char *sftpcli_copy_line(SftpCli *cli, bool until_cursor);
 size_t sftpcli_get_unprocessed_feed(SftpCli *cli);
 void sftpcli_refresh(SftpCli *cli);
+void sftpcli_start_quote(SftpCli *cli);
 
 #endif

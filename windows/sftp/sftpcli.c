@@ -215,3 +215,8 @@ size_t sftpcli_get_unprocessed_feed(SftpCli *cli) {
 void sftpcli_refresh(SftpCli *cli) {
     linenoiseShow(&cli->ls);
 }
+
+void sftpcli_start_quote(SftpCli *cli)
+{
+    linenoiseStartQuote(&cli->ls);
+}

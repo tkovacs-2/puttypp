@@ -31,6 +31,7 @@ typedef struct SftpCompletion {
     const char *remote_path;
     const char *remote_ctx_filename;
     SftpCmdArgInfo remote_ctx_arg_info;
+    bool remote_has_open_quote;
     bool is_paging;
     bool is_paging_local;
     Paging paging;
@@ -133,7 +134,9 @@ static bool paging_print(SftpCompletion *completion, size_t max_lines)
                 continue;
             }
             seat_output(sftp->seat, SEAT_OUTPUT_STDOUT, n->name, strlen(n->name));
-            seat_output(sftp->seat, SEAT_OUTPUT_STDOUT, completion->is_paging_local ? &completion->local_path_separator : &completion->remote_path_separator, 1);
+            if (n->is_dir) {
+                seat_output(sftp->seat, SEAT_OUTPUT_STDOUT, completion->is_paging_local ? &completion->local_path_separator : &completion->remote_path_separator, 1);
+            }
             seat_output(sftp->seat, SEAT_OUTPUT_STDOUT, "\r\n", 2);
             lines++;
         }
@@ -213,9 +216,21 @@ static void paging_start(SftpCompletion *completion, const SftpCompletionName *n
     completion->paging = p;
 }
 
+static void feed_completion(SftpCli *cli, const char *buf, size_t len, bool has_open_quote, bool close_quote)
+{
+    if (!has_open_quote && memchr(buf, ' ', len)) {
+        has_open_quote = true;
+        sftpcli_start_quote(cli);
+    }
+    sftpcli_feed(cli, buf, len);
+    if (has_open_quote && close_quote) {
+        sftpcli_feed(cli, "\"", 1);
+    }
+}
+
 static bool apply_completion(SftpCompletion *completion,
                              const SftpCompletionName *names, size_t nnames, size_t prefix_length,
-                             SftpCmdArgInfo arg_info)
+                             SftpCmdArgInfo arg_info, bool has_open_quote)
 {
     size_t nvisible = nnames;
     size_t base_index = 0;
@@ -236,7 +251,7 @@ static bool apply_completion(SftpCompletion *completion,
     bool local = arg_info.type == SFTPCMD_ARG_TYPE_LOCAL;
     if (nvisible == 1) {
         const char *feed = names[base_index].name + prefix_length;
-        sftpcli_feed(sftp->cli, feed, strlen(feed));
+        feed_completion(sftp->cli, feed, strlen(feed), has_open_quote, true);
         if (names[base_index].is_dir) {
             sftpcli_feed(sftp->cli, local ? &completion->local_path_separator : &completion->remote_path_separator, 1);
         } else if (arg_info.more_args) {
@@ -245,7 +260,7 @@ static bool apply_completion(SftpCompletion *completion,
     } else {
         size_t extension = extend_prefix(names, nnames, prefix_length, base_index, arg_info.dir_only);
         if (extension > 0) {
-            sftpcli_feed(sftp->cli, names[base_index].name + prefix_length, extension);
+            feed_completion(sftp->cli, names[base_index].name + prefix_length, extension, has_open_quote, false);
         } else {
             paging_start(completion, names, nnames, local, arg_info.dir_only);
             return false;
@@ -258,10 +273,10 @@ static void command_completion(SftpCompletion *completion, const char *command, 
     const SftpCompletionName *names = completion->command_cache;
     size_t nnames = completion->command_cache_size;
     shrink_names_to_prefix(&names, &nnames, command);
-    apply_completion(completion, names, nnames, strlen(command), (SftpCmdArgInfo){SFTPCMD_ARG_TYPE_COMMAND, false, more_args});
+    apply_completion(completion, names, nnames, strlen(command), (SftpCmdArgInfo){SFTPCMD_ARG_TYPE_COMMAND, false, more_args}, false);
 }
 
-static void local_completion(SftpCompletion *completion, const char *arg, SftpCmdArgInfo arg_info) {
+static void local_completion(SftpCompletion *completion, const char *arg, SftpCmdArgInfo arg_info, bool has_open_quote) {
     SftpCompletionName *names = NULL;
     size_t nnames = 0;
     size_t namesize = 0;
@@ -290,20 +305,20 @@ static void local_completion(SftpCompletion *completion, const char *arg, SftpCm
         nnames++;
     }
     finish_wildcard_matching(wcm);
-    if (apply_completion(completion, names, nnames, prefix_length, arg_info)) {
+    if (apply_completion(completion, names, nnames, prefix_length, arg_info, has_open_quote)) {
         free_name_array(names, nnames);
     }
 }
 
-static void remote_completion_continue(SftpCompletion *completion, const char *filename, SftpCmdArgInfo arg_info)
+static void remote_completion_continue(SftpCompletion *completion, const char *filename, SftpCmdArgInfo arg_info, bool has_open_quote)
 {
     const SftpCompletionName *names = completion->remote_cache;
     size_t nnames = completion->remote_cache_size;
     shrink_names_to_prefix(&names, &nnames, filename);
-    apply_completion(completion, names, nnames, strlen(filename), arg_info);
+    apply_completion(completion, names, nnames, strlen(filename), arg_info, has_open_quote);
 }
 
-static const SftpCmdVtable *remote_completion(SftpCompletion *completion, const char *arg, SftpCmdArgInfo arg_info)
+static const SftpCmdVtable *remote_completion(SftpCompletion *completion, const char *arg, SftpCmdArgInfo arg_info, bool has_open_quote)
 {
     const char *path = sftp_get_absolute_path(completion->sftp->pwd, arg);
     char *filename = stripslashes(path, false);
@@ -318,10 +333,11 @@ static const SftpCmdVtable *remote_completion(SftpCompletion *completion, const 
         }
         completion->remote_ctx_filename = dupstr(filename);
         completion->remote_ctx_arg_info = arg_info;
+        completion->remote_has_open_quote = has_open_quote;
         sfree((void *)path);
         return &sftpcompletion_readdir_vt;
     }
-    remote_completion_continue(completion, filename, arg_info);
+    remote_completion_continue(completion, filename, arg_info, has_open_quote);
     sfree((void *)path);
     return NULL;
 }
@@ -395,7 +411,8 @@ SftpCmdArgInfo get_command_arg_info(const char *command, int arg_index)
 const SftpCmdVtable *sftpcompletion_start_completion(SftpCompletion *completion)
 {
     SftpArgs args;
-    sftpargs_parse(sftpcli_copy_line(completion->sftp->cli, true), &args, true);
+    bool has_open_quote = false;
+    sftpargs_parse(sftpcli_copy_line(completion->sftp->cli, true), &args, true, &has_open_quote);
 
     if (args.argc == 0) {
         sftpargs_free(&args);
@@ -415,12 +432,12 @@ const SftpCmdVtable *sftpcompletion_start_completion(SftpCompletion *completion)
     int arg_to_complete = args.argc-1;
     SftpCmdArgInfo arg_info = get_command_arg_info(args.argv[0], arg_to_complete-first_file_arg);
     if (arg_info.type == SFTPCMD_ARG_TYPE_REMOTE) {
-        const SftpCmdVtable *vt = remote_completion(completion, args.argv[arg_to_complete], arg_info);
+        const SftpCmdVtable *vt = remote_completion(completion, args.argv[arg_to_complete], arg_info, has_open_quote);
         sftpargs_free(&args);
         return vt;
     }
     if (arg_info.type == SFTPCMD_ARG_TYPE_LOCAL) {
-        local_completion(completion, args.argv[arg_to_complete], arg_info);
+        local_completion(completion, args.argv[arg_to_complete], arg_info, has_open_quote);
         sftpargs_free(&args);
         return NULL;
     }
@@ -438,7 +455,8 @@ void sftpcompletion_continue_completion(SftpCompletion *completion, const SftpCo
     assert(completion->remote_cache == NULL);
     completion->remote_cache = names;
     completion->remote_cache_size = nnames;
-    remote_completion_continue(completion, completion->remote_ctx_filename, completion->remote_ctx_arg_info);
+    remote_completion_continue(completion, completion->remote_ctx_filename,
+                               completion->remote_ctx_arg_info, completion->remote_has_open_quote);
 }
 
 const char *sftpcompletion_get_remote_path(SftpCompletion *completion)

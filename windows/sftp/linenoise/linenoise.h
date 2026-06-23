@@ -94,6 +94,7 @@ void linenoiseHide(linenoiseState *l);
 void linenoiseShow(linenoiseState *l);
 void linenoiseChangeColumns(linenoiseState *l, int cols);
 char *linenoiseCopyLine(linenoiseState *l, int until_cursor);
+void linenoiseStartQuote(linenoiseState *l);
 
 /* History API. */
 void linenoiseInitHistory(linenoiseHistory *h);

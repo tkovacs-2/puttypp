@@ -880,3 +880,25 @@ char *linenoiseCopyLine(linenoiseState *l, int until_cursor) {
 int linenoiseUtf8Colspan(const char *s, size_t len, linenoiseWcWidth wcwidth) {
     return utf8_colspan((const unsigned char *)s, len, wcwidth);
 }
+
+void linenoiseStartQuote(linenoiseState *l)
+{
+    if (l->len + 1 > l->buflen) {
+        return;
+    }
+    size_t p = l->pos;
+    while (p > 0) {
+        if (l->buf[p-1] == ' ') {
+            break;
+        }
+        if (l->buf[p-1] == '"' && (p < 2 || l->buf[p-2] != '\\')) {
+            break;
+        }
+        p--;
+    }
+    memmove(l->buf + p + 1, l->buf + p, l->len - p + 1);
+    l->buf[p] = '"';
+    l->len += 1;
+    l->pos += 1;
+    refreshLine(l);
+}

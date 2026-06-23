@@ -603,17 +603,20 @@ static void srv_readdir(SftpServer *srv, SftpReplyBuilder *reply, ptrlen handle,
         fxp_reply_error(reply, SSH_FX_EOF, "");
         return;
     }
-    fxp_reply_name_count(reply, 1);
-    TestRemoteFile *file = dir->dir_content[dir->readdir_current++];
+    size_t count = dir->readdir_current == 0 ? 1 : min(2, dir->size - dir->readdir_current);
+    fxp_reply_name_count(reply, count);
+    for (; count > 0; count--) {
+        TestRemoteFile *file = dir->dir_content[dir->readdir_current++];
 
-    static const char * const bits[] = {"---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx"};
-    static char t[1024];
-    ptrlen name = {file->name, strlen(file->name)};
-    ptrlen longname = {t, 0};
-    if (!omit_longname) {
-        longname.len = snprintf(t, sizeof(t), "%c%s%s%s %5d %s", (file->is_dir ? 'd': '-'), bits[(file->attrs.permissions&0700)>>6], bits[(file->attrs.permissions&0070)>>3], bits[(file->attrs.permissions&0007)], file->size, file->name);
+        static const char * const bits[] = {"---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx"};
+        static char t[1024];
+        ptrlen name = {file->name, strlen(file->name)};
+        ptrlen longname = {t, 0};
+        if (!omit_longname) {
+            longname.len = snprintf(t, sizeof(t), "%c%s%s%s %5d %s", (file->is_dir ? 'd': '-'), bits[(file->attrs.permissions&0700)>>6], bits[(file->attrs.permissions&0070)>>3], bits[(file->attrs.permissions&0007)], file->size, file->name);
+        }
+        fxp_reply_full_name(reply, name, longname, get_attrs(file));
     }
-    fxp_reply_full_name(reply, name, longname, get_attrs(file));
 }
 
 const struct SftpServerVtable srv_vt = {
