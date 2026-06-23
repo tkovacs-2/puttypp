@@ -273,6 +273,7 @@ static INT_PTR CALLBACK finddlg_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 return TRUE;
             }
             break;
+        case IDCANCEL:
         case IDC_FINDDLG_CLOSE:
             notify_frame(hwnd, FINDDLG_CLOSE);
             DestroyWindow(hwnd);

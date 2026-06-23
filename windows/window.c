@@ -4781,6 +4781,10 @@ static int TranslateKey(WinGuiFrontend *wgf, UINT message, WPARAM wParam, LPARAM
             }
             return 0;
         }
+        if (wParam == 'F' && shift_state == 3) {
+            show_finddlg(wgf_active);
+            return 0;
+        }
         if (left_alt && wParam == VK_F4 && conf_get_bool(conf, CONF_alt_f4)) {
             return -1;
         }
