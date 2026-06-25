@@ -253,7 +253,8 @@ static INT_PTR CALLBACK finddlg_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             }
             break;
         case IDOK:
-            notify_frame(hwnd, FINDDLG_EDIT_ENTER);
+            notify_frame(hwnd, (GetKeyState(VK_SHIFT) & 0x8000) ?
+                         FINDDLG_DOWN : FINDDLG_EDIT_ENTER);
             return TRUE;
         case IDC_FINDDLG_UP:
             notify_frame(hwnd, FINDDLG_UP);

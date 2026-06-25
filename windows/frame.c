@@ -504,12 +504,6 @@ static void handle_finddlg_notify(LPARAM lParam) {
         }
         break;
       }
-      case FINDDLG_EDIT_ENTER: {
-        if (wgf_active->find.pattern_len > 0) {
-            update_find_match_mask(wgf_active);
-        }
-        break;
-      }
       case FINDDLG_IGNORE_CASE: {
         wgf_active->find.ignore_case = finddlg_get_ignore_case();
         if (find_match_mask.cells) {
@@ -523,6 +517,14 @@ static void handle_finddlg_notify(LPARAM lParam) {
             update_find_match_mask(wgf_active);
         }
         break;
+      }
+      case FINDDLG_EDIT_ENTER: {
+        if (wgf_active->find.pattern_len < 2) {
+            if (wgf_active->find.pattern_len > 0) {
+                update_find_match_mask(wgf_active);
+            }
+            break;
+        } // if pattern_len >= 2, no break, fall through to FINDDLG_UP
       }
       case FINDDLG_UP: {
         if (find_match_mask.cells) {
