@@ -216,6 +216,8 @@ static void tc_get(TestLocal *tl, TestRemote *tr)
     testremote_add_file(tr, "x/1.txt", 11);
     testremote_add_file(tr, "x/x2/2.txt", 40000);
     testremote_add_dir(tr, "x/x2/x3");
+    testremote_add_dir(tr, "x/c:\\");
+
     testlocal_add_dir(tl, "w");
 
     testlocal_execute(tl, "get x/3.html w\\1.html");
@@ -228,6 +230,7 @@ static void tc_get(TestLocal *tl, TestRemote *tr)
     ASSERT_TRUE(testlocal_check_file(tl, "x/1.txt"));
     ASSERT_TRUE(testlocal_check_file(tl, "x/x2/2.txt"));
     ASSERT_TRUE(testlocal_check_dir(tl, "x/x2/x3"));
+    ASSERT_TRUE(testlocal_find_output(&tl->error, "ignoring potentially dangerous server-supplied filename 'c:\\'", true));
 
     testlocal_execute(tl, "get -r /sftp/x y");
     testremote_process(tr);
@@ -355,6 +358,13 @@ static void tc_rm(TestLocal *tl, TestRemote *tr)
     testlocal_execute(tl, "rm /sftp/x");
     testremote_process(tr);
     ASSERT_TRUE(testlocal_find_output(&tl->error, "no such file or directory", false));
+
+    testremote_add_file(tr, "dir/c:", 1);
+
+    testlocal_execute(tl, "rm dir/*");
+    testremote_process(tr);
+    ASSERT_TRUE(testremote_check_file(tr, "dir/c:"));
+    ASSERT_TRUE(testlocal_find_output(&tl->error, "ignoring potentially dangerous server-supplied filename 'c:'", true));
 }
 
 static void tc_mv(TestLocal *tl, TestRemote *tr)

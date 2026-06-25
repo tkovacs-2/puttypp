@@ -16,6 +16,9 @@ typedef struct TestRemote {
   TestRemoteFile *root;
   TestRemoteFile *home;
   bool is_dirty;
+
+  int fail_request_type;
+  int fail_request_skip;
 } TestRemote;
 
 void testremote_init(TestRemote *tr);
@@ -44,4 +47,5 @@ void testremote_connection_fatal(TestRemote *tr);
 bool testremote_is_dirty(TestRemote *tr);
 void testremote_set_clean(TestRemote *tr);
 
+void testremote_fail_request(TestRemote *tr, int type, int skip);
 #endif

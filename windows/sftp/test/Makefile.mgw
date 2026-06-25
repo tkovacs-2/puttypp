@@ -80,6 +80,7 @@ SOURCES :=  ../../../putty-0.81/windows/utils/filename.c \
             ../../../windows/sftp/test/testremote.c \
             ../../../windows/sftp/test/testlocal.c \
             ../../../windows/sftp/test/testsuite_sftpbe.c \
+            ../../../windows/sftp/test/testsuite_sftpbe_failures.c \
             ../../../windows/sftp/test/testsuite_sftpbe_unicode.c \
             ../../../windows/sftp/test/testsuite_linenoise.c \
             ../../../windows/sftp/test/main.c

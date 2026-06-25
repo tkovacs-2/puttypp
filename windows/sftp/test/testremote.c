@@ -199,6 +199,8 @@ void testremote_init(TestRemote *tr)
     tr->home->is_dir = true;
     PUT_PERMISSIONS(tr->home->attrs, 0755);
     tr->is_dirty = false;
+    tr->fail_request_type = 0;
+    tr->fail_request_skip = 0;
 }
 
 void testremote_uninit(TestRemote *tr)
@@ -313,7 +315,22 @@ struct sftp_packet *testremote_get_request(TestRemote *tr)
 
 void testremote_process_request(TestRemote *tr, struct sftp_packet *req)
 {
-    struct sftp_packet *reply = sftp_handle_request(&tr->srv, req);
+    struct sftp_packet *reply = NULL;
+
+    if (req->type == tr->fail_request_type) {
+        if (tr->fail_request_skip == 0) {
+            reply = sftp_pkt_init(SSH_FXP_STATUS);
+            put_uint32(reply, GET_32BIT_MSB_FIRST(req->data + 1));
+            put_uint32(reply, SSH_FX_PERMISSION_DENIED);
+            put_stringz(reply, "synthetic permission denied");
+            tr->fail_request_type = 0;
+        } else {
+            tr->fail_request_skip--;
+        }
+    }
+    if (!reply) {
+        reply = sftp_handle_request(&tr->srv, req);
+    }
     sftp_pkt_free(req);
     sftp_send_prepare(reply);
     seat_output(tr->client_seat, SEAT_OUTPUT_STDOUT, reply->data, reply->length);
@@ -341,6 +358,12 @@ bool testremote_is_dirty(TestRemote *tr)
 void testremote_set_clean(TestRemote *tr)
 {
     tr->is_dirty = false;
+}
+
+void testremote_fail_request(TestRemote *tr, int type, int skip)
+{
+    tr->fail_request_type = type;
+    tr->fail_request_skip = skip;
 }
 
 static void srv_realpath(SftpServer *srv, SftpReplyBuilder *reply, ptrlen path)
@@ -596,6 +619,18 @@ static void srv_write(SftpServer *srv, SftpReplyBuilder *reply, ptrlen handle, u
     fxp_reply_ok(reply);
 }
 
+static void readdir_reply(SftpReplyBuilder *reply, const char *name, struct fxp_attrs attrs, bool omit_longname)
+{
+    static const char * const bits[] = {"---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx"};
+    static char t[1024];
+    ptrlen name_only = {name, strlen(name)};
+    ptrlen longname = {t, 0};
+    if (!omit_longname) {
+        longname.len = snprintf(t, sizeof(t), "%c%s%s%s %5d %s", ((attrs.permissions&PERMS_DIRECTORY) ? 'd': '-'), bits[(attrs.permissions&0700)>>6], bits[(attrs.permissions&0070)>>3], bits[(attrs.permissions&0007)], (int)attrs.size, name);
+    }
+    fxp_reply_full_name(reply, name_only, longname, attrs);
+}
+
 static void srv_readdir(SftpServer *srv, SftpReplyBuilder *reply, ptrlen handle, int max_entries, bool omit_longname)
 {
     TestRemoteFile *dir = *((TestRemoteFile **)handle.ptr);
@@ -603,19 +638,23 @@ static void srv_readdir(SftpServer *srv, SftpReplyBuilder *reply, ptrlen handle,
         fxp_reply_error(reply, SSH_FX_EOF, "");
         return;
     }
-    size_t count = dir->readdir_current == 0 ? 1 : min(2, dir->size - dir->readdir_current);
-    fxp_reply_name_count(reply, count);
+    size_t count = 0;
+    if (dir->readdir_current == 0) {
+        count = 1;
+        fxp_reply_name_count(reply, 3);
+        struct fxp_attrs attrs;
+        attrs.flags = SSH_FILEXFER_ATTR_PERMISSIONS;
+        PUT_PERMISSIONS(attrs, PERMS_DIRECTORY|0644);
+        attrs.size = 0;
+        readdir_reply(reply, ".", attrs, omit_longname);
+        readdir_reply(reply, "..", attrs, omit_longname);
+    } else {
+        count = min(2, dir->size - dir->readdir_current);
+        fxp_reply_name_count(reply, count);
+    }
     for (; count > 0; count--) {
         TestRemoteFile *file = dir->dir_content[dir->readdir_current++];
-
-        static const char * const bits[] = {"---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx"};
-        static char t[1024];
-        ptrlen name = {file->name, strlen(file->name)};
-        ptrlen longname = {t, 0};
-        if (!omit_longname) {
-            longname.len = snprintf(t, sizeof(t), "%c%s%s%s %5d %s", (file->is_dir ? 'd': '-'), bits[(file->attrs.permissions&0700)>>6], bits[(file->attrs.permissions&0070)>>3], bits[(file->attrs.permissions&0007)], file->size, file->name);
-        }
-        fxp_reply_full_name(reply, name, longname, get_attrs(file));
+        readdir_reply(reply, file->name, get_attrs(file), omit_longname);
     }
 }
 

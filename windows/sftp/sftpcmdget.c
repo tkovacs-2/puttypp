@@ -299,7 +299,7 @@ static bool get_file_process_pkt(SftpCmd *cmd, Sftp *sftp, struct sftp_packet *p
         int len;
         bool shown_err = false;
         bool got_data = false;
-        while (xfer_download_data(cmdget->xfer, &vbuf, &len)) {
+        while (xfer_download_data_wrapper(cmdget->xfer, &vbuf, &len)) {
             unsigned char *buf = (unsigned char *)vbuf;
 
             int wpos = 0;

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 
 void testsuite_sftpbe();
+void testsuite_sftpbe_failures();
 void testsuite_sftpbe_unicode();
 void testsuite_linenoise();
 void free_reverse_mappings();
@@ -40,6 +41,7 @@ int main()
 {
 //    testsuite_memleak_gdb();
     testsuite_sftpbe();
+    testsuite_sftpbe_failures();
     testsuite_sftpbe_unicode();
     testsuite_linenoise();
 

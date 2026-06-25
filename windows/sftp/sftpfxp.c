@@ -48,3 +48,15 @@ void sftp_free_pending_requests(Sftp *sftp)
         sfree(req);
     }
 }
+
+bool xfer_download_data_wrapper(struct fxp_xfer *xfer, void **buf, int *len)
+{
+    // The rr->buffer is not freed by xfer_download_data when rr->complete < 0
+    // Here we pre-free such rr->buffer-s.
+    struct req *rr = xfer->head;
+    while (rr && rr->complete < 0) {
+        sfree(rr->buffer);
+        rr = rr->next;
+    }
+    return xfer_download_data(xfer, buf, len);
+}
