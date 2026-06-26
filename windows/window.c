@@ -70,6 +70,7 @@
 #define WM_IGNORE_CLIP (WM_APP + 2)
 #define WM_FULLSCR_ON_MAX (WM_APP + 3)
 #define WM_GOT_CLIPDATA (WM_APP + 4)
+#define WM_TAB_CYCLE (WM_APP + 6)
 
 /* Needed for Chinese support and apparently not always defined. */
 #ifndef VK_PROCESSKEY
@@ -3706,6 +3707,21 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         }
         paste_clipdata(term, wParam, lParam);
         return 0;
+      case WM_TAB_CYCLE: {
+        int count = pointer_array_size();
+        int current = tab_bar_get_current_tab();
+        int new = current + (wParam == 0 ? 1 : -1);
+        if (new < 0) {
+            new = count - 1;
+        } else if (new >= count) {
+            new = 0;
+        }
+        if (new != current) {
+            tab_bar_select_tab(new);
+            activate_session((WinGuiFrontend *)pointer_array_get(new));
+        }
+        return 0;
+      }
       default:
         if (message == wm_mousewheel || message == WM_MOUSEWHEEL
                                                 || message == WM_MOUSEHWHEEL) {
@@ -4784,6 +4800,17 @@ static int TranslateKey(WinGuiFrontend *wgf, UINT message, WPARAM wParam, LPARAM
         if (wParam == 'F' && shift_state == 3) {
             show_finddlg(wgf_active);
             return 0;
+        }
+        if (wParam == VK_TAB) {
+            if (shift_state == 3) {
+                PostMessage(frame_hwnd, WM_TAB_CYCLE, 1, 0);
+                return 0;
+            }
+            if (shift_state == 2) {
+                PostMessage(frame_hwnd, WM_TAB_CYCLE, 0, 0);
+                return 0;
+            }
+            // if no ctrl or shift+ctrl was pressed fall through
         }
         if (left_alt && wParam == VK_F4 && conf_get_bool(conf, CONF_alt_f4)) {
             return -1;
