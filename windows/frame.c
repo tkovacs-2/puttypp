@@ -46,18 +46,18 @@ static HWND create_frame_window(Conf *conf, int guess_width, int guess_height) {
 static void adjust_terminal_window(HWND frame_hwnd, HWND term_hwnd) {
     RECT r;
     GetClientRect(frame_hwnd, &r);
-    SetWindowPos(term_hwnd, NULL, tab_bar_get_extra_width(), tab_bar_get_extra_height(),
-                 r.right-r.left-tab_bar_get_extra_width(), r.bottom-r.top-tab_bar_get_extra_height(), SWP_NOZORDER);
+    SetWindowPos(term_hwnd, NULL, 0, tab_bar_common_height(),
+                 r.right-r.left-0, r.bottom-r.top-tab_bar_common_height(), SWP_NOZORDER);
 }
 
 static void adjust_extra_size() {
-    extra_width += tab_bar_get_extra_width();
-    extra_height += tab_bar_get_extra_height();
+    extra_width += 0;
+    extra_height += tab_bar_common_height();
 }
 
 static void adjust_client_size(int *width, int *height) {
-    *width -= tab_bar_get_extra_width();
-    *height -= tab_bar_get_extra_height();
+    *width -= 0;
+    *height -= tab_bar_common_height();
     if (*width < 0) {
       *width = 0;
     }
@@ -330,8 +330,8 @@ static void activate_session(WinGuiSession *wgs) {
     if (wgs_active->term->has_focus) {
         term_set_focus(wgs_active->term, false);
     }
-    tab_bar_clear_tab_notified(wgs->tab_index);
-    tab_bar_select_tab(wgs->tab_index);
+    tab_bar_clear_tab_notified(&tabbar, wgs->tab_index);
+    tab_bar_select_tab(&tabbar, wgs->tab_index);
     wgs_active = wgs;
     if (!wgs->term->has_focus && GetForegroundWindow() == frame_hwnd) {
         term_set_focus(wgs->term, true);
@@ -364,8 +364,8 @@ static void activate_session(WinGuiSession *wgs) {
                 WINDOWPLACEMENT wp;
                 wp.length = sizeof(WINDOWPLACEMENT);
                 GetWindowPlacement(frame_hwnd, &wp);
-                int width = wp.rcNormalPosition.right-wp.rcNormalPosition.left-extra_width+tab_bar_get_extra_width();
-                int height = wp.rcNormalPosition.bottom-wp.rcNormalPosition.top-extra_height+tab_bar_get_extra_height();
+                int width = wp.rcNormalPosition.right-wp.rcNormalPosition.left-extra_width+0;
+                int height = wp.rcNormalPosition.bottom-wp.rcNormalPosition.top-extra_height+tab_bar_common_height();
                 wm_size_resize_term(wgs, MAKELPARAM(width, height));
             }
             reset_window(wgs, 0);
@@ -407,7 +407,7 @@ static char *create_tab_title(int id, const char *session_name) {
 
 static void add_session_tab(int protocol, const char *session_name, int index) {
     char *tab_title = create_tab_title(session_counter, session_name);
-    tab_bar_insert_tab(index, tab_title, protocol);
+    tab_bar_insert_tab(&tabbar, index, tab_title, protocol);
     sfree(tab_title);
 }
 
@@ -417,7 +417,7 @@ static void add_session(Conf *conf, const char *session_name, int index) {
     }
     add_session_tab(conf_get_int(conf, CONF_protocol), session_name, index);
     WinGuiSession *wgs = create_frontend(conf, session_name);
-    pointer_array_insert(index, wgs);
+    pointer_array_insert(&pointer_array, index, wgs);
     activate_session(wgs);
     start_backend(wgs);
 }
@@ -425,21 +425,21 @@ static void add_session(Conf *conf, const char *session_name, int index) {
 static void delete_session(WinGuiSession *wgs) {
     int deleted_index = wgs->tab_index;
     int index = wgs_active->tab_index;
-    if (pointer_array_size() > 1 && index == deleted_index) {
-        if (index+1 == pointer_array_size()) {
+    if (pointer_array_size(&pointer_array) > 1 && index == deleted_index) {
+        if (index+1 == pointer_array_size(&pointer_array)) {
             index--;
         } else {
             index++;
         }
-        activate_session((WinGuiSession *)pointer_array_get(index));
+        activate_session((WinGuiSession *)pointer_array_get(&pointer_array, index));
     }
-    tab_bar_remove_tab(deleted_index);
-    pointer_array_remove(deleted_index);
-    if (pointer_array_size() == 0) {
+    tab_bar_remove_tab(&tabbar, deleted_index);
+    pointer_array_remove(&pointer_array, deleted_index);
+    if (pointer_array_size(&pointer_array) == 0) {
         SetFocus(NULL);
     }
     destroy_frontend(wgs);
-    if (pointer_array_size() == 0) {
+    if (pointer_array_size(&pointer_array) == 0) {
         wgs_active = NULL;
         DestroyWindow(frame_hwnd);
     }
@@ -453,12 +453,17 @@ static void show_finddlg(WinGuiSession *wgs) {
         wgs->find.pattern_len = 0;
         wgs->find.pattern[0] = 0;
     }
-    finddlg_create(wgs->find.pattern, true, wgs->find.ignore_case, wgs->find.whole_word);
+    RECT rect;
+    GetClientRect(term_hwnd, &rect);
+    MapWindowPoints(term_hwnd, frame_hwnd, (POINT *)&rect, 2);
+    finddlg_show(&finddlg, &rect, wgs->find.pattern, true, wgs->find.ignore_case, wgs->find.whole_word);
 }
 
 static void update_finddlg(WinGuiSession *wgs) {
     if (wgs->find.pattern) {
-        finddlg_create(wgs->find.pattern, false, wgs->find.ignore_case, wgs->find.whole_word);
+        RECT rect;
+        GetClientRect(term_hwnd, &rect);
+        finddlg_show(&finddlg, &rect, wgs->find.pattern, false, wgs->find.ignore_case, wgs->find.whole_word);
         if (wgs->find.pattern_len > 1) {
             find_match_mask_alloc(&find_match_mask, wgs->term->rows, wgs->term->cols);
             find_display(wgs->term, wgs->find.pattern, wgs->find.pattern_len, wgs->find.ignore_case, wgs->find.whole_word, &find_match_mask);
@@ -467,7 +472,7 @@ static void update_finddlg(WinGuiSession *wgs) {
         }
     } else {
         find_match_mask_free(&find_match_mask);
-        finddlg_destroy();
+        finddlg_hide(&finddlg);
     }
     wgs->find.update_finddlg_pending = false;
 }
@@ -497,7 +502,7 @@ static void update_find_pattern(WinGuiSession *wgs, int l) {
         wgs->find.pattern = snewn(buffer_len, wchar_t);
         wgs->find.pattern_buffer_len = buffer_len;
     }
-    wgs->find.pattern_len = finddlg_get_text(wgs->find.pattern, wgs->find.pattern_buffer_len);
+    wgs->find.pattern_len = finddlg_get_text(&finddlg, wgs->find.pattern, wgs->find.pattern_buffer_len);
     assert(wgs->find.pattern_len == l);
 }
 
@@ -511,7 +516,7 @@ static void scroll_to_row(WinGuiSession *wgs, int row) {
 static void handle_finddlg_notify(LPARAM lParam) {
     switch (((NMHDR *)lParam)->code) {
       case FINDDLG_EDIT_CHANGED: {
-        int l = finddlg_get_text(NULL, 0);
+        int l = finddlg_get_text(&finddlg,NULL, 0);
         update_find_pattern(wgs_active, l);
         if (l > 1) {
             update_find_match_mask(wgs_active);
@@ -521,14 +526,14 @@ static void handle_finddlg_notify(LPARAM lParam) {
         break;
       }
       case FINDDLG_IGNORE_CASE: {
-        wgs_active->find.ignore_case = finddlg_get_ignore_case();
+        wgs_active->find.ignore_case = finddlg_get_ignore_case(&finddlg);
         if (find_match_mask.cells) {
             update_find_match_mask(wgs_active);
         }
         break;
       }
       case FINDDLG_WHOLE_WORD: {
-        wgs_active->find.whole_word = finddlg_get_whole_word();
+        wgs_active->find.whole_word = finddlg_get_whole_word(&finddlg);
         if (find_match_mask.cells) {
             update_find_match_mask(wgs_active);
         }
@@ -565,7 +570,6 @@ static void handle_finddlg_notify(LPARAM lParam) {
         break;
       }
       case FINDDLG_CLOSE: {
-        finddlg_destroy();
         sfree(wgs_active->find.pattern);
         wgs_active->find.pattern = NULL;
         wgs_active->find.pattern_buffer_len = 0;
@@ -583,22 +587,22 @@ static void handle_wm_notify(LPARAM lParam) {
         handle_finddlg_notify(lParam);
         return;
     }
-    struct TBHDR *nmhdr = (struct TBHDR *)lParam;
-    int index = tab_bar_get_current_tab();
-    switch (nmhdr->_hdr.code) {
+    struct TabBarNotify *nmhdr = (struct TabBarNotify *)lParam;
+    int index = tab_bar_get_active_tab(&tabbar);
+    switch (nmhdr->hdr.code) {
       case TCN_SELCHANGE: {
-        activate_session((WinGuiSession *)pointer_array_get(index));
+        activate_session((WinGuiSession *)pointer_array_get(&pointer_array, index));
         break;
       }
       case TCN_TABEXCHANGE: {
-        pointer_array_exchange(nmhdr->_tabOrigin, index);
+        pointer_array_exchange(&pointer_array, nmhdr->tab_origin, index);
         break;
       }
       case TCN_TABDELETE: {
-        WinGuiSession *wgs = (WinGuiSession *)pointer_array_get(nmhdr->_tabOrigin);
+        WinGuiSession *wgs = (WinGuiSession *)pointer_array_get(&pointer_array, nmhdr->tab_origin);
         if (!wgs->remote_closed && conf_get_bool(wgs->conf, CONF_warn_on_close)) {
-            if (index != nmhdr->_tabOrigin) {
-                index = nmhdr->_tabOrigin;
+            if (index != nmhdr->tab_origin) {
+                index = nmhdr->tab_origin;
                 activate_session(wgs);
             }
             show_mouseptr(wgs, true);

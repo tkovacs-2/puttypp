@@ -195,6 +195,10 @@ static WinGuiSession *wgs_active = NULL;
 #include "draw_text_find_match.h"
 
 static FindMatchMask find_match_mask;
+static FindDlg finddlg;
+static TabBar tabbar;
+static PointerArray pointer_array;
+static HFONT tab_bar_font = NULL;
 
 static bool wintw_setup_draw_ctx(TermWin *);
 static void wintw_draw_text(TermWin *, int x, int y, wchar_t *text, int len,
@@ -514,7 +518,7 @@ static void remote_close(WinGuiSession *wgs, int exitcode, const char *msg) {
     if (is_session_deletable(wgs)) {
         return;
     }
-    tab_bar_set_tab_unusable(wgs->tab_index, true);
+    tab_bar_set_tab_unusable(&tabbar, wgs->tab_index, true);
     add_error_message_to_term(wgs, msg);
 }
 
@@ -546,6 +550,34 @@ static void check_menu_item(UINT item, UINT check)
     int i;
     for (i = 0; i < lenof(popup_menus); i++)
         CheckMenuItem(popup_menus[i].menu, item, check);
+}
+
+static void finddlg_pin_to_frame() {
+    HDWP hdwp = BeginDeferWindowPos(1);
+    finddlg_pin_window(&finddlg, hdwp);
+    EndDeferWindowPos(hdwp);
+}
+
+static void finddlg_adjust_to_frame() {
+    RECT r;
+    GetClientRect(term_hwnd, &r);
+    MapWindowPoints(term_hwnd, frame_hwnd, (POINT *)&r, 2);
+    finddlg_adjust_window(&finddlg, &r);
+}
+
+static void tab_bar_adjust_window_old() {
+    HDWP hdwp = BeginDeferWindowPos(1);
+    RECT r;
+    GetClientRect(frame_hwnd, &r);
+    tab_bar_adjust_window(&tabbar, &r, hdwp);
+    EndDeferWindowPos(hdwp);
+}
+
+HWND create_term_hwnd() {
+    return NULL;
+}
+
+void possible_term_dimensions(WinGuiSession *wgs, int *width, int *height) {
 }
 
 HINSTANCE hinst;
@@ -686,15 +718,20 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         init_dpi_info();
         sfree(uappname);
 
-        create_tab_bar();
+        tab_bar_font = get_dpi_aware_tab_bar_font();
+        tab_bar_common_init(tab_bar_font);
+        RECT r;
+        GetClientRect(frame_hwnd, &r);
+        tab_bar_init(&tabbar, &r, NULL);
+        tab_bar_set_focused(&tabbar, true);
         add_session_tab(conf_get_int(conf, CONF_protocol), cmdline_session_name, 0);
-        tab_bar_set_measurement(get_dpi_aware_tab_bar_font());
-        pointer_array_reset(frontend_set_tab_index);
+        pointer_array_init(&pointer_array, frontend_set_tab_index);
+        finddlg_init(&finddlg, NULL);
     }
 
     wgs_active = create_frontend(conf, cmdline_session_name);
     WinGuiSession *wgs = wgs_active;
-    pointer_array_insert(0, wgs);
+    pointer_array_insert(&pointer_array, 0, wgs);
 
     /*
      * Correct the guesses for extra_{width,height}.
@@ -710,7 +747,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         extra_height =
             wr.bottom - wr.top - cr.bottom + cr.top +wgs->offset_height*2;
         adjust_extra_size();
-        finddlg_pin_to_frame(tab_bar_get_extra_height());
     }
 
     /*
@@ -1913,8 +1949,8 @@ static void reset_window(WinGuiSession *wgs, int reinit)
             rect.right += p_GetSystemMetricsForDpi(SM_CXVSCROLL,
                                                    dpi_info.x);
         rect.bottom = (wgs->font_height * wgs->term->rows);
-        rect.right += tab_bar_get_extra_width();
-        rect.bottom += tab_bar_get_extra_height();
+        rect.right += 0;
+        rect.bottom += tab_bar_common_height();
         p_AdjustWindowRectExForDpi(
             &rect, GetWindowLongPtr(frame_hwnd, GWL_STYLE),
             FALSE, GetWindowLongPtr(frame_hwnd, GWL_EXSTYLE),
@@ -2275,8 +2311,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             return 0;
         }
         SetFocus(NULL);
-        for (int i=0; i<pointer_array_size(); i++) {
-            WinGuiSession *wgs = (WinGuiSession *)pointer_array_get(i);
+        for (int i=0; i<pointer_array_size(&pointer_array); i++) {
+            WinGuiSession *wgs = (WinGuiSession *)pointer_array_get(&pointer_array, i);
             if (wgs->backend) {
                 stop_backend(wgs);
             }
@@ -2294,9 +2330,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             return 0;
         }
         DestroyWindow(term_hwnd);
-        destroy_tab_bar();
-        finddlg_destroy();
-        pointer_array_reset(NULL);
+        tab_bar_uninit(&tabbar);
+        tab_bar_common_uninit();
+        DeleteObject(tab_bar_font);
+        finddlg_uninit(&finddlg);
+        pointer_array_uninit(&pointer_array);
         find_match_mask_free(&find_match_mask);
         PostQuitMessage(0);
         return 0;
@@ -2359,11 +2397,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             }
             break;
           case IDM_CLOSESESS: {
-            struct TBHDR nmhdr;
-            nmhdr._hdr.hwndFrom = hwnd;
-            nmhdr._hdr.code = TCN_TABDELETE;
-            nmhdr._hdr.idFrom = 0;
-            nmhdr._tabOrigin = wgs->tab_index;
+            struct TabBarNotify nmhdr;
+            nmhdr.hdr.hwndFrom = hwnd;
+            nmhdr.hdr.code = TCN_TABDELETE;
+            nmhdr.hdr.idFrom = 0;
+            nmhdr.tab_origin = wgs->tab_index;
             SendMessage(hwnd, WM_NOTIFY, 0, (LPARAM)(&nmhdr));
             break;
           }
@@ -2384,7 +2422,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             Conf *conf = NULL;
             const char *session_name = NULL;
             if (create_conf(NULL, &conf, &session_name)) {
-                add_session(conf, session_name, pointer_array_size());
+                add_session(conf, session_name, pointer_array_size(&pointer_array));
             }
             break;
           }
@@ -2409,7 +2447,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             Conf *conf = NULL;
             const char *session_name = NULL;
             if (create_conf(sesslist.sessions[sessno], &conf, &session_name)) {
-                add_session(conf, session_name, pointer_array_size());
+                add_session(conf, session_name, pointer_array_size(&pointer_array));
             }
             break;
           }
@@ -2484,7 +2522,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 term_pwron(wgs->term, false);
                 start_backend(wgs);
                 if (wgs->backend) {
-                    tab_bar_set_tab_unusable(wgs->tab_index, false);
+                    tab_bar_set_tab_unusable(&tabbar, wgs->tab_index, false);
                 }
             }
 
@@ -2510,7 +2548,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 sfree((char *)session_name);
             } else {
                 char *tab_title = create_tab_title(wgs->session_id, session_name);
-                tab_bar_set_tab_title(wgs->tab_index, tab_title);
+                tab_bar_set_tab_title(&tabbar, wgs->tab_index, tab_title);
                 sfree(tab_title);
                 sfree((char *) wgs->session_name);
                 wgs->session_name = session_name;
@@ -3152,7 +3190,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         }
         term_notify_window_pos(wgs->term, LOWORD(lParam), HIWORD(lParam));
         sys_cursor_update(wgs);
-        finddlg_pin_to_frame(tab_bar_get_extra_height());
+        finddlg_pin_to_frame();
         break;
       case WM_SIZE:
         if (is_term_hwnd) {
@@ -3219,8 +3257,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 if (resize_action == RESIZE_TERM)
                     wm_size_resize_term(wgs, lParam);
                 reset_window(wgs, 0);
-                tab_bar_adjust_window();
-                finddlg_pin_to_frame(tab_bar_get_extra_height());
+                tab_bar_adjust_window_old();
+                finddlg_adjust_to_frame();
                 adjust_terminal_window(frame_hwnd, term_hwnd);
             } else if (wParam == SIZE_RESTORED && was_zoomed) {
                 was_zoomed = false;
@@ -3232,8 +3270,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                     reset_window(wgs, 2);
                 else
                     reset_window(wgs, 0);
-                tab_bar_adjust_window();
-                finddlg_pin_to_frame(tab_bar_get_extra_height());
+                tab_bar_adjust_window_old();
+                finddlg_adjust_to_frame();
                 adjust_terminal_window(frame_hwnd, term_hwnd);
             } else if (wParam == SIZE_MINIMIZED) {
                 /* do nothing */
@@ -3257,13 +3295,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                  */
                 if (!resizing)
                     recompute_window_offset(wgs);
-                tab_bar_adjust_window();
-                finddlg_pin_to_frame(tab_bar_get_extra_height());
+                tab_bar_adjust_window_old();
+                finddlg_adjust_to_frame();
                 adjust_terminal_window(frame_hwnd, term_hwnd);
             } else {
                 reset_window(wgs, 0);
-                tab_bar_adjust_window();
-                finddlg_pin_to_frame(tab_bar_get_extra_height());
+                tab_bar_adjust_window_old();
+                finddlg_adjust_to_frame();
                 adjust_terminal_window(frame_hwnd, term_hwnd);
             }
         }
@@ -3276,8 +3314,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         dpi_info.x = LOWORD(wParam);
         dpi_info.y = HIWORD(wParam);
         dpi_changed_new_wnd_rect = *(RECT*)(lParam);
-        tab_bar_set_measurement(get_dpi_aware_tab_bar_font());
-        finddlg_pin_to_frame(tab_bar_get_extra_height());
+        DeleteObject(tab_bar_font);
+        tab_bar_font = get_dpi_aware_tab_bar_font();
+        tab_bar_common_dpi_changed(tab_bar_font);
+        tab_bar_dpi_changed(&tabbar);
+        finddlg_adjust_to_frame();
         reset_window(wgs, 3);
         return 0;
       case WM_VSCROLL: {
@@ -3609,8 +3650,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         paste_clipdata(wgs->term, wParam, lParam);
         return 0;
       case WM_TAB_CYCLE: {
-        int count = pointer_array_size();
-        int current = tab_bar_get_current_tab();
+        int count = pointer_array_size(&pointer_array);
+        int current = tab_bar_get_active_tab(&tabbar);
         int new = current + (wParam == 0 ? 1 : -1);
         if (new < 0) {
             new = count - 1;
@@ -3618,8 +3659,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             new = 0;
         }
         if (new != current) {
-            tab_bar_select_tab(new);
-            activate_session((WinGuiSession *)pointer_array_get(new));
+            tab_bar_select_tab(&tabbar, new);
+            activate_session((WinGuiSession *)pointer_array_get(&pointer_array, new));
         }
         return 0;
       }
@@ -6146,7 +6187,7 @@ static size_t win_seat_output(Seat *seat, SeatOutputType type,
                 wgs->find.data_arrived = true;
             }
         } else {
-        tab_bar_set_tab_notified(wgs->tab_index);
+        tab_bar_set_tab_notified(&tabbar, wgs->tab_index);
     }
     }
     return term_data(wgs->term, data, len);
