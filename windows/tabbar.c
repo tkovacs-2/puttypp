@@ -10,7 +10,6 @@ extern HINSTANCE hinst;
 extern HWND frame_hwnd;
 extern POINT dpi_info;
 
-static int tab_extra_width = 0;
 static int tab_extra_height = 0;
 
 enum {
@@ -19,6 +18,9 @@ enum {
     NOTIFY_SET_BLINK,
     NOTIFY_BLINK
 };
+
+#define NOTIFY_BLINK_INTERVAL 500
+#define NOTIFY_TIMER_ID 1
 
 typedef struct {
     TCITEMHEADER header;
@@ -32,14 +34,19 @@ static SIZE imageZone = { 0, 0 };
 static SIZE notifyBlinkZone = { 0, 0 };
 static int imagePaddingX = 0;
 static int closeButtonPaddingX = 0;
-static UINT_PTR notifyBlinkTimer = 0;
+static int tabPaddingX = 0;
+static int tabPaddingY = 0;
+static int activeTopBarCorrection = 0;
+static int textDescentCorrection = 0;
+static int cxEdge = 0;
+static int cyEdge = 0;
 
-static HWND _hSelf = NULL;
 static HFONT _hFont = NULL;
 static HIMAGELIST _hImglst = NULL;
 static WNDPROC _tabBarDefaultProc = NULL;
 
 static COLORREF _activeTopBarFocusedColour = RGB(250, 170, 60);
+static COLORREF _activeTopBarUnfocusedColour = RGB(250, 210, 150);
 static COLORREF _inactiveBgColour = RGB(192, 192, 192);
 static COLORREF _inactiveTextColour = RGB(128, 128, 128);
 
@@ -50,18 +57,20 @@ static RECT _currentHoverTabRect;
 static int _whichCloseClickDown = -1;
 
 static bool _isDragging = false;
+static bool _isDraggingOutside = false;
 static bool _mightBeDragging = false;
 static int _dragCount = 0;
 static int _nTabDragged = -1;
 static int _previousTabSwapped = -1;
+static HIMAGELIST _dragImageList = NULL;
 
 static SIZE _closeButtonZone = { 0, 0 };
 
-static RECT getItemRect(int tabIndex)
+static RECT getItemRect(HWND _hSelf, int tabIndex)
 {
     RECT rect;
     TabCtrl_GetItemRect(_hSelf, tabIndex, &rect);
-    rect.top += GetSystemMetrics(SM_CYEDGE);
+    rect.top += cyEdge;
     return rect;
 }
 
@@ -82,9 +91,9 @@ static POINT getNotifyBlinkPointFrom(const POINT *image)
     return point;
 }
 
-static RECT getNotifyBlinkRect(int tabIndex)
+static RECT getNotifyBlinkRect(HWND _hSelf, int tabIndex)
 {
-    RECT rect = getItemRect(tabIndex);
+    RECT rect = getItemRect(_hSelf, tabIndex);
     POINT image = getImagePointFrom(&rect);
     POINT blink = getNotifyBlinkPointFrom(&image);
     rect.left = blink.x;
@@ -118,35 +127,55 @@ static RECT CloseButtonZone_getButtonRectFrom(const RECT *tabRect)
     return buttonRect;
 }
 
-static bool CloseButtonZone_isHit(int x, int y, const RECT *tabRect)
+static bool CloseButtonZone_isHit(const POINT *point, const RECT *tabRect)
 {
     RECT buttonRect = CloseButtonZone_getButtonRectFrom(tabRect);
 
-    if (x >= buttonRect.left && x <= buttonRect.right && y >= buttonRect.top && y <= buttonRect.bottom)
+    if (point->x >= buttonRect.left && point->x <= buttonRect.right && point->y >= buttonRect.top && point->y <= buttonRect.bottom)
         return true;
 
     return false;
 }
 
-static int TabBarPlus_getTabIndexAt(int x, int y)
+static int TabBarPlus_getTabIndexAt(HWND _hSelf, const POINT *point)
 {
     TCHITTESTINFO hitInfo;
-    hitInfo.pt.x = x;
-    hitInfo.pt.y = y;
+    hitInfo.pt = *point;
     return SendMessage(_hSelf, TCM_HITTEST, 0, (LPARAM)&hitInfo);
 };
 
-static void TabBarPlus_notify(int notifyCode, int tabIndex)
+static POINT TabBarPlus_getPointFromLParam(LPARAM lParam)
 {
-    struct TBHDR nmhdr;
-    nmhdr._hdr.hwndFrom = _hSelf;
-    nmhdr._hdr.code = notifyCode;
-    nmhdr._hdr.idFrom = TAB_BAR_NOTIFY_ID;
-    nmhdr._tabOrigin = tabIndex;
+    POINT point;
+    point.x = (int)(short)LOWORD(lParam);
+    point.y = (int)(short)HIWORD(lParam);
+    return point;
+}
+
+static bool TabBarPlus_isPointOutside(HWND _hSelf, const POINT *point)
+{
+    RECT rect;
+    GetClientRect(_hSelf, &rect);
+    return !PtInRect(&rect, *point);
+}
+
+static void TabBarPlus_notify(HWND _hSelf, int notifyCode, int tabIndex, const POINT *point)
+{
+    TabBarNotify nmhdr;
+    nmhdr.hdr.hwndFrom = _hSelf;
+    nmhdr.hdr.code = notifyCode;
+    nmhdr.hdr.idFrom = TAB_BAR_NOTIFY_ID;
+    nmhdr.tab_origin = tabIndex;
+    if (point) {
+        nmhdr.point = *point;
+    } else {
+        nmhdr.point.x = 0;
+        nmhdr.point.y = 0;
+    }
     SendMessage(GetParent(_hSelf), WM_NOTIFY, 0, (LPARAM)(&nmhdr));
 }
 
-static void TabBarPlus_trackMouseEvent(DWORD event2check)
+static void TabBarPlus_trackMouseEvent(HWND _hSelf, DWORD event2check)
 {
     TRACKMOUSEEVENT tme = {};
     tme.cbSize = sizeof(tme);
@@ -155,15 +184,10 @@ static void TabBarPlus_trackMouseEvent(DWORD event2check)
     TrackMouseEvent(&tme);
 }
 
-static void TabBarPlus_drawItem(DRAWITEMSTRUCT *pDrawItemStruct)
+static void TabBarPlus_drawItem(HDC hDC, const RECT *rcItem, HWND _hSelf, int nTab, bool drawItem)
 {
-    RECT rect = pDrawItemStruct->rcItem;
+    RECT rect = *rcItem;
 
-    int nTab = pDrawItemStruct->itemID;
-    if (nTab < 0)
-    {
-        MessageBox(NULL, TEXT("nTab < 0"), TEXT(""), MB_OK);
-    }
     bool isSelected = (nTab == SendMessage(_hSelf, TCM_GETCURSEL, 0, 0));
 
     TCHAR label[MAX_PATH] = { '\0' };
@@ -171,58 +195,61 @@ static void TabBarPlus_drawItem(DRAWITEMSTRUCT *pDrawItemStruct)
     tci.header.mask = TCIF_TEXT|TCIF_IMAGE|TCIF_PARAM;
     tci.header.pszText = label;
     tci.header.cchTextMax = MAX_PATH-1;
+    tci.header.iImage = 0;
+    tci.unusable = false;
+    tci.notifyState = NOTIFY_NORMAL;
 
-    if (!SendMessage(_hSelf, TCM_GETITEM, nTab, (LPARAM)(&tci)))
-    {
-        MessageBox(NULL, TEXT("! TCM_GETITEM"), TEXT(""), MB_OK);
-    }
+    SendMessage(_hSelf, TCM_GETITEM, nTab, (LPARAM)(&tci));
 
     const COLORREF colorActiveBg = GetSysColor(COLOR_BTNFACE);
     const COLORREF colorInactiveBg = _inactiveBgColour;
     const COLORREF colorActiveText = (tci.unusable ? unusableTextColor : GetSysColor(COLOR_BTNTEXT));
     const COLORREF colorInactiveText = (tci.unusable ? unusableTextColor : (tci.notifyState != NOTIFY_NORMAL ? notifiedTextColor : _inactiveTextColour));
 
-    HDC hDC = pDrawItemStruct->hDC;
-
     int nSavedDC = SaveDC(hDC);
 
     SetBkMode(hDC, TRANSPARENT);
     HBRUSH hBrush;
 
-    int cxEdge = GetSystemMetrics(SM_CXEDGE);
-    int cyEdge = GetSystemMetrics(SM_CYEDGE);
     // equalize drawing areas of active and inactive tabs
-    if (isSelected)
+    if (drawItem)
     {
-        // the drawing area of the active tab extends on all borders by default
+        if (isSelected)
+        {
+            // the drawing area of the active tab extends on all borders by default
+            rect.top += cyEdge;
+            rect.bottom -= cyEdge;
+            rect.left += cxEdge;
+            rect.right -= cxEdge;
+            // the active tab is also slightly higher by default (use this to shift the tab cotent up bx two pixels if tobBar is not drawn)
+            rect.top += cyEdge;
+        }
+        else
+        {
+            rect.left -= cxEdge;
+            rect.right += cxEdge;
+            rect.top += cyEdge;
+            rect.bottom += cyEdge;
+        }
+    } else if (isSelected) {
         rect.top += cyEdge;
-        rect.bottom -= cyEdge;
-        rect.left += cxEdge;
-        rect.right -= cxEdge;
-        // the active tab is also slightly higher by default (use this to shift the tab cotent up bx two pixels if tobBar is not drawn)
-        rect.top += cyEdge;
-    }
-    else
-    {
-        rect.left -= cxEdge;
-        rect.right += cxEdge;
-        rect.top += cyEdge;
-        rect.bottom += cyEdge;
     }
 
     // draw highlights on tabs (top bar for active tab / darkened background for inactive tab)
     if (isSelected)
     {
+        bool isFocused = tab_bar_get_from_hwnd(_hSelf)->focused;
+
         RECT r = rect;
-        r.bottom = r.top + DPIManager_scaleX(2);
+        r.bottom = r.top + activeTopBarCorrection;
         r.top -= cyEdge;
 
-        hBrush = CreateSolidBrush(_activeTopBarFocusedColour); // #FAAA3C
+        hBrush = CreateSolidBrush(isFocused ? _activeTopBarFocusedColour : _activeTopBarUnfocusedColour); // #FAAA3C
         FillRect(hDC, &r, hBrush);
         DeleteObject((HGDIOBJ)hBrush);
 
         r.top = r.bottom;
-        r.bottom = pDrawItemStruct->rcItem.bottom;
+        r.bottom = rcItem->bottom;
         hBrush = CreateSolidBrush(colorActiveBg);
         FillRect(hDC, &r, hBrush);
         DeleteObject((HGDIOBJ)(hBrush));
@@ -235,9 +262,8 @@ static void TabBarPlus_drawItem(DRAWITEMSTRUCT *pDrawItemStruct)
     }
 
     // draw image
-    HIMAGELIST hImgLst = (HIMAGELIST)SendMessage(_hSelf, TCM_GETIMAGELIST, 0, 0);
     POINT imagePos = getImagePointFrom(&rect);
-    ImageList_Draw(hImgLst, tci.header.iImage, hDC, imagePos.x, imagePos.y, isSelected ? ILD_TRANSPARENT : ILD_SELECTED);
+    ImageList_Draw(_hImglst, tci.header.iImage, hDC, imagePos.x, imagePos.y, isSelected ? ILD_NORMAL : ILD_BLEND50);
 
     HDC hdcMemory = CreateCompatibleDC(hDC);
 
@@ -287,7 +313,7 @@ static void TabBarPlus_drawItem(DRAWITEMSTRUCT *pDrawItemStruct)
 
     TEXTMETRIC textMetrics;
     GetTextMetrics(hDC, &textMetrics);
-    int textDescent = textMetrics.tmDescent / DPIManager_scaleX(2);;
+    int textDescent = textMetrics.tmDescent / textDescentCorrection;
 
     int Flags = DT_SINGLELINE | DT_NOPREFIX;
 
@@ -311,7 +337,69 @@ static void TabBarPlus_drawItem(DRAWITEMSTRUCT *pDrawItemStruct)
     RestoreDC(hDC, nSavedDC);
 }
 
-static void TabBarPlus_exchangeTabItemData(int oldTab, int newTab)
+static void TabBarPlus_setDragCursor(bool outside)
+{
+    SetCursor(LoadCursor(NULL, outside ? IDC_ARROW : IDC_SIZEWE));
+}
+
+static void TabBarPlus_clearDragCursor()
+{
+    SetCursor(LoadCursor(NULL, IDC_ARROW));
+}
+
+static void TabBarPlus_endDragImage(void)
+{
+    if (!_dragImageList)
+        return;
+
+    ImageList_DragLeave(NULL);
+    ImageList_EndDrag();
+    ImageList_Destroy(_dragImageList);
+    _dragImageList = NULL;
+}
+
+static void TabBarPlus_beginDragImage(HWND _hSelf, int nTab, const POINT *point)
+{
+    if (_dragImageList) {
+        return;
+    }
+
+    RECT rect;
+    TabCtrl_GetItemRect(_hSelf, nTab, &rect);
+    int width = rect.right - rect.left;
+    int height = rect.bottom - rect.top;
+    HDC hdc = GetDC(_hSelf);
+    HDC hdcMemory = CreateCompatibleDC(hdc);
+    HBITMAP hBitmap = CreateCompatibleBitmap(hdc, width, height);
+    HGDIOBJ oldBitmap = SelectObject(hdcMemory, hBitmap);
+    RECT drawRect = { 0, 0, width, height };
+    TabBarPlus_drawItem(hdcMemory, &drawRect, _hSelf, nTab, false);
+    SelectObject(hdcMemory, oldBitmap);
+    DeleteDC(hdcMemory);
+    ReleaseDC(_hSelf, hdc);
+
+    _dragImageList = ImageList_Create(width, height, ILC_COLOR24, 1, 1);
+    ImageList_Add(_dragImageList, hBitmap, NULL);
+    DeleteObject(hBitmap);
+
+    ImageList_BeginDrag(_dragImageList, 0, width / 2, height);
+
+    POINT screenPoint = *point;
+    ClientToScreen(_hSelf, &screenPoint);
+    ImageList_DragEnter(NULL, screenPoint.x, screenPoint.y);
+}
+
+static void TabBarPlus_moveDragImage(HWND _hSelf, const POINT *point)
+{
+    if (!_dragImageList)
+        return;
+
+    POINT screenPoint = *point;
+    ClientToScreen(_hSelf, &screenPoint);
+    ImageList_DragMove(screenPoint.x, screenPoint.y);
+}
+
+static void TabBarPlus_exchangeTabItemData(HWND _hSelf, int oldTab, int newTab)
 {
     //1. shift their data, and insert the source
     TabCtrlItem itemData_nDraggedTab, itemData_shift;
@@ -349,13 +437,13 @@ static void TabBarPlus_exchangeTabItemData(int oldTab, int newTab)
 
     //2. set to focus
     SendMessage(_hSelf, TCM_SETCURSEL, newTab, 0);
-    TabBarPlus_notify(TCN_TABEXCHANGE, oldTab);
+    TabBarPlus_notify(_hSelf, TCN_TABEXCHANGE, oldTab, NULL);
 }
 
-static void TabBarPlus_exchangeItemData(POINT point)
+static void TabBarPlus_exchangeItemData(HWND _hSelf, POINT point)
 {
     // Find the destination tab...
-    int nTab = TabBarPlus_getTabIndexAt(point.x, point.y);
+    int nTab = TabBarPlus_getTabIndexAt(_hSelf, &point);
 
     // The position is over a tab.
     //if (hitinfo.flags != TCHT_NOWHERE)
@@ -368,7 +456,7 @@ static void TabBarPlus_exchangeItemData(POINT point)
                 return;
             }
 
-            TabBarPlus_exchangeTabItemData(_nTabDragged, nTab);
+            TabBarPlus_exchangeTabItemData(_hSelf, _nTabDragged, nTab);
             _previousTabSwapped = _nTabDragged;
             _nTabDragged = nTab;
         }
@@ -383,18 +471,40 @@ static void TabBarPlus_exchangeItemData(POINT point)
     }
 }
 
+static BOOL TabBarPlus_endDragging(HWND _hSelf)
+{
+    _mightBeDragging = false;
+    _dragCount = 0;
+    if (_isDragging)
+    {
+        TabBarPlus_clearDragCursor();
+        if (_isDraggingOutside)
+        {
+            TabBarPlus_endDragImage();
+        }
+        _isDragging = false;
+        _isDraggingOutside = false;
+        if (GetCapture() == _hSelf)
+        {
+            ReleaseCapture();
+        }
+        return TRUE;
+    }
+    return FALSE;
+}
+
 static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM lParam)
 {
+    HWND _hSelf = hwnd;
     switch (Message)
     {
         case WM_LBUTTONDOWN :
         {
-            int xPos = LOWORD(lParam);
-            int yPos = HIWORD(lParam);
+            POINT p = TabBarPlus_getPointFromLParam(lParam);
 
-            if (CloseButtonZone_isHit(xPos, yPos, &_currentHoverTabRect))
+            if (CloseButtonZone_isHit(&p, &_currentHoverTabRect))
             {
-                _whichCloseClickDown = TabBarPlus_getTabIndexAt(xPos, yPos);
+                _whichCloseClickDown = TabBarPlus_getTabIndexAt(hwnd, &p);
                 InvalidateRect(hwnd, &_currentHoverTabRect, FALSE);
                 return TRUE;
             }
@@ -411,6 +521,12 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
 
         case WM_RBUTTONDOWN :    //rightclick selects tab aswell
         {
+            if (_isDragging && _isDraggingOutside) {
+                TabBarPlus_notify(hwnd, TCN_OUTSIDE_CANCEL, _nTabDragged, NULL);
+            }
+            if (TabBarPlus_endDragging(hwnd)) {
+                return TRUE;
+            }
             CallWindowProc(_tabBarDefaultProc, hwnd, WM_LBUTTONDOWN, wParam, lParam);
             return TRUE;
         }
@@ -433,6 +549,8 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
                     {
                         _nTabDragged = tabSelected;
                         _isDragging = true;
+                        _isDraggingOutside = false;
+                        TabBarPlus_setDragCursor(false);
 
                         // TLS_BUTTONS is already captured on Windows and will break on ::SetCapture
                         // However, this is not the case for WINE/ReactOS and must ::SetCapture
@@ -443,9 +561,7 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
                     }
                 }
             }
-            POINT p;
-            p.x = LOWORD(lParam);
-            p.y = HIWORD(lParam);
+            POINT p = TabBarPlus_getPointFromLParam(lParam);
             {
                 RECT r;
                 GetWindowRect(_hSelf, &r);
@@ -454,14 +570,35 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
 
             if (_isDragging)
             {
-                TabBarPlus_exchangeItemData(p);
+                if (TabBarPlus_isPointOutside(hwnd, &p))
+                {
+                    if (!_isDraggingOutside) {
+                        TabBarPlus_setDragCursor(true);
+                        TabBarPlus_beginDragImage(_hSelf, _nTabDragged, &p);
+                    } else {
+                        TabBarPlus_moveDragImage(hwnd, &p);
+                    }
+                    TabBarPlus_notify(hwnd, TCN_OUTSIDE_DRAG, _nTabDragged, &p);
+                    _isDraggingOutside = true;
+                }
+                else
+                {
+                    if (_isDraggingOutside)
+                    {
+                        TabBarPlus_setDragCursor(false);
+                        TabBarPlus_endDragImage();
+                        TabBarPlus_notify(hwnd, TCN_OUTSIDE_CANCEL, _nTabDragged, NULL);
+                        _isDraggingOutside = false;
+                    }
+                    TabBarPlus_exchangeItemData(hwnd, p);
+                }
                 return TRUE;
             }
             else
             {
                 bool isFromTabToTab = false;
 
-                int iTabNow = TabBarPlus_getTabIndexAt(p.x, p.y); // _currentHoverTabItem keeps previous value, and it need to be updated
+                int iTabNow = TabBarPlus_getTabIndexAt(hwnd, &p); // _currentHoverTabItem keeps previous value, and it need to be updated
 
                 if (_currentHoverTabItem == iTabNow && _currentHoverTabItem != -1) // mouse moves arround in the same tab
                 {
@@ -493,8 +630,8 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
 
                 if (_currentHoverTabItem != -1) // is hovering
                 {
-                    _currentHoverTabRect = getItemRect(_currentHoverTabItem);
-                    _isCloseHover = CloseButtonZone_isHit(p.x, p.y, &_currentHoverTabRect);
+                    _currentHoverTabRect = getItemRect(hwnd, _currentHoverTabItem);
+                    _isCloseHover = CloseButtonZone_isHit(&p, &_currentHoverTabRect);
                 }
                 else
                 {
@@ -513,7 +650,7 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
 
                 // Mouse moves out from tab zone will send WM_MOUSELEAVE message
                 // but it doesn't track mouse moving from a tab to another
-                TabBarPlus_trackMouseEvent(TME_LEAVE);
+                TabBarPlus_trackMouseEvent(hwnd, TME_LEAVE);
             }
 
             break;
@@ -534,40 +671,36 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
 
         case WM_LBUTTONUP :
         {
-            _mightBeDragging = false;
-            _dragCount = 0;
-
-            int xPos = LOWORD(lParam);
-            int yPos = HIWORD(lParam);
-            int currentTabOn = TabBarPlus_getTabIndexAt(xPos, yPos);
+            POINT p = TabBarPlus_getPointFromLParam(lParam);
+            int currentTabOn = TabBarPlus_getTabIndexAt(hwnd, &p);
             if (_isDragging)
             {
-                if (GetCapture() == _hSelf)
-                {
-                    ReleaseCapture();
+                if (TabBarPlus_isPointOutside(hwnd, &p)) {
+                    TabBarPlus_notify(hwnd, TCN_OUTSIDE_RELEASE, _nTabDragged, &p);
                 }
-                else
-                {
-                    _isDragging = false;
+                else if (_isDraggingOutside) {
+                    TabBarPlus_notify(hwnd, TCN_OUTSIDE_CANCEL, _nTabDragged, NULL);
                 }
-
+            }
+            if (TabBarPlus_endDragging(hwnd))
+            {
                 return TRUE;
             }
 
-            if ((_whichCloseClickDown == currentTabOn) && CloseButtonZone_isHit(xPos, yPos, &_currentHoverTabRect))
+            if ((_whichCloseClickDown == currentTabOn) && CloseButtonZone_isHit(&p, &_currentHoverTabRect))
             {
-                TabBarPlus_notify(TCN_TABDELETE, currentTabOn);
+                TabBarPlus_notify(hwnd, TCN_TABDELETE, currentTabOn, NULL);
                 _whichCloseClickDown = -1;
 
                 // Get the next tab at same position
                 // If valid tab is found then
                 //     update the current hover tab RECT (_currentHoverTabRect)
                 //     update close hover flag (_isCloseHover), so that x will be highlighted or not based on new _currentHoverTabRect
-                int nextTab = TabBarPlus_getTabIndexAt(xPos, yPos);
+                int nextTab = TabBarPlus_getTabIndexAt(hwnd, &p);
                 if (nextTab != -1)
                 {
-                    _currentHoverTabRect = getItemRect(nextTab);
-                    _isCloseHover = CloseButtonZone_isHit(xPos, yPos, &_currentHoverTabRect);
+                    _currentHoverTabRect = getItemRect(hwnd, nextTab);
+                    _isCloseHover = CloseButtonZone_isHit(&p, &_currentHoverTabRect);
                 }
                 return TRUE;
             }
@@ -577,9 +710,10 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
 
         case WM_CAPTURECHANGED :
         {
-            if (_isDragging)
-            {
-                _isDragging = false;
+            if (_isDragging) {
+                TabBarPlus_notify(hwnd, TCN_OUTSIDE_CANCEL, _nTabDragged, NULL);
+            }
+            if (TabBarPlus_endDragging(_hSelf)) {
                 return TRUE;
             }
             break;
@@ -587,7 +721,8 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
 
         case WM_DRAWITEM :
         {
-            TabBarPlus_drawItem((DRAWITEMSTRUCT *)lParam);
+            DRAWITEMSTRUCT *pDrawItemStruct = (DRAWITEMSTRUCT *)lParam;
+            TabBarPlus_drawItem(pDrawItemStruct->hDC, &pDrawItemStruct->rcItem, hwnd, pDrawItemStruct->itemID, true);
             return TRUE;
         }
 
@@ -601,6 +736,7 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
             }
             return result;
         }
+
         case WM_TIMER:
         {
             bool needNotifyTimer = false;
@@ -616,18 +752,19 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
                 if (tci.notifyState == NOTIFY_SET_BLINK) {
                     tci.notifyState = NOTIFY_BLINK;
                     TabCtrl_SetItem(_hSelf, i, &tci);
-                    RECT rect = getNotifyBlinkRect(i);
+                    RECT rect = getNotifyBlinkRect(hwnd, i);
                     InvalidateRect(_hSelf, &rect, FALSE);
                 } else if (tci.notifyState == NOTIFY_BLINK) {
                     tci.notifyState = NOTIFY_SET;
                     TabCtrl_SetItem(_hSelf, i, &tci);
-                    RECT rect = getNotifyBlinkRect(i);
+                    RECT rect = getNotifyBlinkRect(hwnd, i);
                     InvalidateRect(_hSelf, &rect, FALSE);
                 }
             }
             if (!needNotifyTimer) {
-                KillTimer(_hSelf, 1);
-                notifyBlinkTimer = 0;
+                KillTimer(_hSelf, NOTIFY_TIMER_ID);
+                TabBar *tab_bar = tab_bar_get_from_hwnd(_hSelf);
+                tab_bar->notify_blink_timer = 0;
             }
         }
     }
@@ -635,40 +772,24 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
     return CallWindowProc(_tabBarDefaultProc, hwnd, Message, wParam, lParam);
 }
 
-void create_tab_bar() {
+void tab_bar_common_init(HFONT dpiAwareFont) {
     INITCOMMONCONTROLSEX icce;
     icce.dwSize = sizeof(icce);
     icce.dwICC = ICC_TAB_CLASSES;
     InitCommonControlsEx(&icce);
+    _hImglst = ImageList_Create(1, 1, ILC_COLOR4, 0, 10);
 
-    int style = WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_VISIBLE |\
-        TCS_TOOLTIPS | TCS_FOCUSNEVER | TCS_TABS | TCS_OWNERDRAWFIXED;
+    tab_bar_common_dpi_changed(dpiAwareFont);
 
-    RECT rect;
-    GetClientRect(frame_hwnd, &rect);
-
-    _hSelf = CreateWindowEx(
-                0,
-                WC_TABCONTROL,
-                TEXT("Tab"),
-                style,
-                0, 0, rect.right, rect.bottom,
-                frame_hwnd,
-                NULL,
-                hinst,
-                0);
-
-    _tabBarDefaultProc = (WNDPROC)(SetWindowLongPtr(_hSelf, GWLP_WNDPROC, (LONG_PTR)TabBarPlus_runProc));
-    _hImglst = ImageList_Create(1, 1, ILC_COLOR32 | ILC_MASK, 0, 10);
-
-    TabCtrl_SetItemExtra(_hSelf, sizeof(TabCtrlItem)-sizeof(TCITEMHEADER));
+    cxEdge = GetSystemMetrics(SM_CXEDGE);
+    cyEdge = GetSystemMetrics(SM_CYEDGE);
 }
 
-void destroy_tab_bar() {
-    DestroyWindow(_hSelf);
+void tab_bar_common_uninit() {
+    ImageList_Destroy(_hImglst);
 }
 
-void tab_bar_set_measurement(HFONT dpiAwareFont) {
+void tab_bar_common_dpi_changed(HFONT dpiAwareFont) {
     imageZone.cx = DPIManager_scaleX(16);
     imageZone.cy = DPIManager_scaleY(13);
     notifyBlinkZone.cx = DPIManager_scaleX(8);
@@ -677,48 +798,88 @@ void tab_bar_set_measurement(HFONT dpiAwareFont) {
     _closeButtonZone.cy = DPIManager_scaleY(11);
     imagePaddingX = DPIManager_scaleX(4);
     closeButtonPaddingX = DPIManager_scaleX(5);
-
-    if (_hFont) {
-        DeleteObject(_hFont);
-    }
-    if (dpiAwareFont) {
-        _hFont = dpiAwareFont;
-    } else {
-        _hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-    }
-    SendMessage(_hSelf, WM_SETFONT, (WPARAM)_hFont, (LPARAM)FALSE);
+    tabPaddingX = DPIManager_scaleX(15);
+    tabPaddingY = DPIManager_scaleY(5);
+    activeTopBarCorrection = DPIManager_scaleY(2);
+    textDescentCorrection = DPIManager_scaleY(2);
 
     ImageList_SetIconSize(_hImglst, imageZone.cx, imageZone.cy);
-
     for (int i=IDI_BACKEND_FIRST; i<=IDI_BACKEND_LAST; i++) {
         HICON hIcon = LoadImage(hinst, MAKEINTRESOURCE(i), IMAGE_ICON, imageZone.cx, imageZone.cy, 0);
         ImageList_AddIcon(_hImglst, hIcon);
         DestroyIcon(hIcon);
     }
-    SendMessage(_hSelf, TCM_SETPADDING, 0, MAKELPARAM(DPIManager_scaleX(15), DPIManager_scaleY(5)));
-    SendMessage(_hSelf, TCM_SETIMAGELIST, 0, (LPARAM)_hImglst);
 
-    RECT r = {0, 0, 0, 0};
-    TabCtrl_AdjustRect(_hSelf, TRUE, &r);
-    tab_extra_width = 0;
-    tab_extra_height = -r.top + r.bottom;
+    _hFont = dpiAwareFont;
+    tab_extra_height = 0;
 }
 
-int tab_bar_get_extra_width() {
-    return tab_extra_width;
-}
-
-int tab_bar_get_extra_height() {
+int tab_bar_common_height() {
     return tab_extra_height;
 }
 
-void tab_bar_adjust_window() {
-    RECT rect;
-    GetClientRect(frame_hwnd, &rect);
-    SetWindowPos(_hSelf, NULL, 0, 0, rect.right, tab_extra_height, SWP_NOMOVE | SWP_NOZORDER);
+void tab_bar_init(TabBar *tab_bar, const RECT *rect, void *user_data) {
+    int style = WS_CHILD | WS_CLIPSIBLINGS | \
+        TCS_FOCUSNEVER | TCS_TABS | TCS_OWNERDRAWFIXED;
+
+    tab_bar->hwnd = CreateWindowEx(
+                0,
+                WC_TABCONTROL,
+                NULL,
+                style,
+                rect->left, rect->top, rect->right - rect->left, rect->bottom - rect->top,
+                frame_hwnd,
+                NULL,
+                hinst,
+                (LPVOID)tab_bar);
+    tab_bar->notify_blink_timer = 0;
+    tab_bar->user_data = user_data;
+    tab_bar->focused = false;
+
+    SetWindowLongPtr(tab_bar->hwnd, GWLP_USERDATA, (LONG_PTR)tab_bar);
+    _tabBarDefaultProc = (WNDPROC)(SetWindowLongPtr(tab_bar->hwnd, GWLP_WNDPROC, (LONG_PTR)TabBarPlus_runProc));
+    TabCtrl_SetItemExtra(tab_bar->hwnd, sizeof(TabCtrlItem)-sizeof(TCITEMHEADER));
+
+    tab_bar_dpi_changed(tab_bar);
+    SetWindowPos(tab_bar->hwnd, NULL, 0, 0, rect->right - rect->left, tab_extra_height, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOMOVE | SWP_SHOWWINDOW);
 }
 
-void tab_bar_insert_tab(int index, const char *title, int image) {
+void tab_bar_uninit(TabBar *tab_bar) {
+    HWND _hSelf = tab_bar->hwnd;
+    DestroyWindow(_hSelf);
+    tab_bar->hwnd = NULL;
+    tab_bar->notify_blink_timer = 0;
+}
+
+void tab_bar_dpi_changed(TabBar *tab_bar) {
+    SendMessage(tab_bar->hwnd, WM_SETFONT, (WPARAM)_hFont, (LPARAM)FALSE);
+    SendMessage(tab_bar->hwnd, TCM_SETPADDING, 0, MAKELPARAM(tabPaddingX, tabPaddingY));
+    SendMessage(tab_bar->hwnd, TCM_SETIMAGELIST, 0, (LPARAM)_hImglst);
+
+    if (tab_extra_height == 0) {
+        bool is_empty = (TabCtrl_GetItemCount(tab_bar->hwnd) == 0);
+        if (is_empty) {
+            TabCtrlItem tci;
+            tci.header.mask = TCIF_TEXT;
+            tci.header.pszText = "X";
+            TabCtrl_InsertItem(tab_bar->hwnd, 0, &tci);
+        }
+        RECT r = {0, 0, 0, 0};
+        TabCtrl_AdjustRect(tab_bar->hwnd, TRUE, &r);
+        tab_extra_height = -r.top + r.bottom;
+        if (is_empty) {
+            TabCtrl_DeleteItem(tab_bar->hwnd, 0);
+        }
+    }
+}
+
+HDWP tab_bar_adjust_window(TabBar *tab_bar, const RECT *rect, HDWP hdwp) {
+    return DeferWindowPos(hdwp, tab_bar->hwnd, NULL, rect->left, rect->top,
+                          rect->right - rect->left, tab_extra_height,
+                          SWP_NOACTIVATE | SWP_NOZORDER);
+}
+
+void tab_bar_insert_tab(TabBar *tab_bar, int index, const char *title, int image) {
     TabCtrlItem tci;
 
     tci.header.mask = TCIF_TEXT|TCIF_IMAGE|TCIF_PARAM;
@@ -727,48 +888,48 @@ void tab_bar_insert_tab(int index, const char *title, int image) {
     tci.notifyState = NOTIFY_NORMAL;
     tci.unusable = false;
 
-    TabCtrl_InsertItem(_hSelf, index, &tci);
+    TabCtrl_InsertItem(tab_bar->hwnd, index, &tci);
 }
 
-void tab_bar_remove_tab(int index) {
-    TabCtrl_DeleteItem(_hSelf, index);
+void tab_bar_remove_tab(TabBar *tab_bar, int index) {
+    TabCtrl_DeleteItem(tab_bar->hwnd, index);
 }
 
-void tab_bar_select_tab(int index) {
-    TabCtrl_SetCurSel(_hSelf, index);
+void tab_bar_select_tab(TabBar *tab_bar, int index) {
+    TabCtrl_SetCurSel(tab_bar->hwnd, index);
 }
 
-int tab_bar_get_current_tab() {
-    return TabCtrl_GetCurSel(_hSelf);
+int tab_bar_get_active_tab(TabBar *tab_bar) {
+    return TabCtrl_GetCurSel(tab_bar->hwnd);
 }
 
-void tab_bar_set_tab_title(int index, const char *title) {
+void tab_bar_set_tab_title(TabBar *tab_bar, int index, const char *title) {
     TabCtrlItem tci;
 
     tci.header.mask = TCIF_TEXT;
     tci.header.pszText = (LPSTR)title;
 
-    TabCtrl_SetItem(_hSelf, index, &tci);
+    TabCtrl_SetItem(tab_bar->hwnd, index, &tci);
 }
 
-void tab_bar_set_tab_unusable(int index, bool unusable) {
+void tab_bar_set_tab_unusable(TabBar *tab_bar, int index, bool unusable) {
     TabCtrlItem tci;
 
     tci.header.mask = TCIF_PARAM;
     tci.notifyState = NOTIFY_NORMAL;
     tci.unusable = unusable;
 
-    if (TabCtrl_SetItem(_hSelf, index, &tci)) {
-        RECT rect = getItemRect(index);
-        InvalidateRect(_hSelf, &rect, FALSE);
+    if (TabCtrl_SetItem(tab_bar->hwnd, index, &tci)) {
+        RECT rect = getItemRect(tab_bar->hwnd, index);
+        InvalidateRect(tab_bar->hwnd, &rect, FALSE);
     }
 }
 
-void tab_bar_set_tab_notified(int index) {
+void tab_bar_set_tab_notified(TabBar *tab_bar, int index) {
     TabCtrlItem tci;
 
     tci.header.mask = TCIF_PARAM;
-    if (!TabCtrl_GetItem(_hSelf, index, &tci)) {
+    if (!TabCtrl_GetItem(tab_bar->hwnd, index, &tci)) {
         return;
     }
     if (tci.unusable) {
@@ -776,29 +937,55 @@ void tab_bar_set_tab_notified(int index) {
     }
     if (tci.notifyState == NOTIFY_NORMAL) {
         tci.notifyState = NOTIFY_SET;
-        TabCtrl_SetItem(_hSelf, index, &tci);
-        RECT rect = getItemRect(index);
-        InvalidateRect(_hSelf, &rect, FALSE);
-        if (!notifyBlinkTimer) {
-            notifyBlinkTimer = SetTimer(_hSelf, 1, 500, NULL);
+        TabCtrl_SetItem(tab_bar->hwnd, index, &tci);
+        RECT rect = getItemRect(tab_bar->hwnd, index);
+        InvalidateRect(tab_bar->hwnd, &rect, FALSE);
+        if (!tab_bar->notify_blink_timer) {
+            tab_bar->notify_blink_timer = SetTimer(tab_bar->hwnd, NOTIFY_TIMER_ID, NOTIFY_BLINK_INTERVAL, NULL);
         }
     } else if (tci.notifyState == NOTIFY_SET) {
         tci.notifyState = NOTIFY_SET_BLINK;
-        TabCtrl_SetItem(_hSelf, index, &tci);
+        TabCtrl_SetItem(tab_bar->hwnd, index, &tci);
     }
 }
 
-void tab_bar_clear_tab_notified(int index) {
+void tab_bar_clear_tab_notified(TabBar *tab_bar, int index) {
     TabCtrlItem tci;
 
     tci.header.mask = TCIF_PARAM;
-    if (!TabCtrl_GetItem(_hSelf, index, &tci)) {
+    if (!TabCtrl_GetItem(tab_bar->hwnd, index, &tci)) {
         return;
     }
     if (tci.notifyState != NOTIFY_NORMAL) {
         tci.notifyState = NOTIFY_NORMAL;
-        TabCtrl_SetItem(_hSelf, index, &tci);
-        RECT rect = getItemRect(index);
-        InvalidateRect(_hSelf, &rect, FALSE);
+        TabCtrl_SetItem(tab_bar->hwnd, index, &tci);
+        RECT rect = getItemRect(tab_bar->hwnd, index);
+        InvalidateRect(tab_bar->hwnd, &rect, FALSE);
+    }
+}
+
+void tab_bar_import_tab(TabBar *tab_bar, TabBar *source, int target_index, int source_index) {
+    char title[MAX_PATH] = { '\0' };
+    TabCtrlItem tci;
+
+    tci.header.mask = TCIF_TEXT | TCIF_IMAGE | TCIF_PARAM;
+    tci.header.pszText = title;
+    tci.header.cchTextMax = MAX_PATH - 1;
+
+    TabCtrl_GetItem(source->hwnd, source_index, &tci);
+    TabCtrl_InsertItem(tab_bar->hwnd, target_index, &tci);
+}
+
+TabBar *tab_bar_get_from_hwnd(HWND hwnd) {
+    return (TabBar *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+}
+
+void tab_bar_set_focused(TabBar *tab_bar, bool focused) {
+    if (tab_bar->focused != focused) {
+        tab_bar->focused = focused;
+        RECT rect;
+        TabCtrl_GetItemRect(tab_bar->hwnd, TabCtrl_GetCurSel(tab_bar->hwnd), &rect);
+        rect.bottom = rect.top + cyEdge + activeTopBarCorrection;
+        InvalidateRect(tab_bar->hwnd, &rect, FALSE);
     }
 }
