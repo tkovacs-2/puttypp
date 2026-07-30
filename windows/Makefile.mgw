@@ -377,6 +377,7 @@ SOURCES := ../$(PUTTY)/windows/utils/agent_mutex_name.c \
             ../windows/putty.c \
             ../windows/shinydialogbox.c \
             ../windows/tabbar.c \
+            ../windows/tabdrag.c \
             ../windows/window.c \
             ../windows/conpty.c \
             ../windows/unicode_public.c \
@@ -412,7 +413,11 @@ SOURCES := ../$(PUTTY)/windows/utils/agent_mutex_name.c \
             ../windows/find/kmp.c \
             ../windows/find/ucase.c \
             ../windows/find/uchar.c \
-            ../windows/terminal_public.c
+            ../windows/terminal_public.c \
+            ../windows/pane.c \
+            ../windows/panesizetip.c \
+            ../windows/split.c \
+            ../windows/splitmarker.c
 
 RESOURCE := ../windows/putty.rc
 

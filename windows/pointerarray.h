@@ -1,15 +1,23 @@
 #ifndef POINTERARRAY_H
 #define POINTERARRAY_H
 
-typedef void (*pointer_array_set_index)(void *p, int index);
+typedef void (*PointerArraySetIndex)(void *p, int index);
 
-void pointer_array_reset(pointer_array_set_index set_index_callback);
+typedef struct {
+    void **buffer;
+    int size;
+    int capacity;
+    PointerArraySetIndex set_index_callback;
+} PointerArray;
 
-void pointer_array_clear();
-int pointer_array_size();
-void *pointer_array_get();
-void pointer_array_insert(int index, void *p);
-void *pointer_array_remove(int index);
-void pointer_array_exchange(int index, int new_index);
+void pointer_array_init(PointerArray *pointer_array, PointerArraySetIndex set_index_callback);
+void pointer_array_uninit(PointerArray *pointer_array);
+
+void pointer_array_clear(PointerArray *pointer_array);
+int pointer_array_size(PointerArray *pointer_array);
+void *pointer_array_get(PointerArray *pointer_array, int index);
+void pointer_array_insert(PointerArray *pointer_array, int index, void *p);
+void *pointer_array_remove(PointerArray *pointer_array, int index);
+void pointer_array_exchange(PointerArray *pointer_array, int index, int new_index);
 
 #endif
