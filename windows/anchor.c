@@ -112,13 +112,7 @@ void anchor_init(HWND hwnd, const POINT *dpi_info, AnchorInfo *ai, int item_coun
         HWND item_hwnd = GetDlgItem(hwnd, ai->item);
         GetWindowRect(item_hwnd, &self);
         MapWindowPoints(NULL, hwnd, (POINT *)&self, 2);
-        if (ai->op == OP_MOVE) {
-            init_move_item(&parent, &self, ai->anchor, &ai->distance_dpi);
-        } else {
-            init_size_item(&parent, &self, ai->anchor, &ai->distance_dpi);
-        }
-        ai->distance.x = MulDiv(ai->distance_dpi.x, 96, dpi_info->x);
-        ai->distance.y = MulDiv(ai->distance_dpi.y, 96, dpi_info->y);
+        anchor_preinit_item(dpi_info, ai, &parent, &self);
     }
 }
 
@@ -148,4 +142,14 @@ void anchor_change_dpi(const POINT *dpi_info, AnchorInfo *ai, int item_count) {
         ai->distance_dpi.x = MulDiv(ai->distance.x, dpi_info->x, 96);
         ai->distance_dpi.y = MulDiv(ai->distance.y, dpi_info->y, 96);
     }
+}
+
+void anchor_preinit_item(const POINT *dpi_info, AnchorInfo *item, const RECT *parent_rect, const RECT *rect) {
+    if (item->op == OP_MOVE) {
+        init_move_item(parent_rect, rect, item->anchor, &item->distance_dpi);
+    } else {
+        init_size_item(parent_rect, rect, item->anchor, &item->distance_dpi);
+    }
+    item->distance.x = MulDiv(item->distance_dpi.x, 96, dpi_info->x);
+    item->distance.y = MulDiv(item->distance_dpi.y, 96, dpi_info->y);
 }

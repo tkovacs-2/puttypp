@@ -26,14 +26,14 @@ typedef struct {
 
 static void set_text_font() {
     HFONT default_hfont = (HFONT)SendMessage(text_hwnd, WM_GETFONT, 0, 0);
-    LOGFONT lf;
+    LOGFONTW lf;
 
-    GetObject(default_hfont, sizeof(LOGFONT), &lf);
+    GetObjectW(default_hfont, sizeof(LOGFONT), &lf);
     lf.lfHeight = MulDiv(lf.lfHeight, dialog_dpi_info.y, 96);
-    text_hfont = CreateFont(lf.lfHeight, 0, 0, 0, FW_DONTCARE, false, false, false,
+    text_hfont = CreateFontW(lf.lfHeight, 0, 0, 0, FW_DONTCARE, false, false, false,
                                  lf.lfCharSet, OUT_DEFAULT_PRECIS,
                                  CLIP_DEFAULT_PRECIS, lf.lfQuality,
-                                 FIXED_PITCH | FF_DONTCARE, "Courier New");
+                                 FIXED_PITCH | FF_DONTCARE, L"Courier New");
     SendMessage(text_hwnd, WM_SETFONT, (WPARAM)text_hfont, (LPARAM)FALSE);
 }
 
