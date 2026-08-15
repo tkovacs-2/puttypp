@@ -16,10 +16,10 @@
 void finddlg_create(WCHAR *pattern, bool activate, bool ignore_case, bool whole_word);
 void finddlg_destroy();
 void finddlg_pin_to_frame(int top_offset);
-void finddlg_size_to_frame(int top_offset);
 int finddlg_get_text(WCHAR *buffer, int buffer_chars);
 bool finddlg_get_ignore_case();
 bool finddlg_get_whole_word();
 bool finddlg_is_dialog_message(MSG *msg);
+void finddlg_relayout_to_dpi();
 
 #endif
