@@ -3220,7 +3220,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                     wm_size_resize_term(wgs, lParam);
                 reset_window(wgs, 0);
                 tab_bar_adjust_window();
-                finddlg_size_to_frame(tab_bar_get_extra_height());
+                finddlg_pin_to_frame(tab_bar_get_extra_height());
                 adjust_terminal_window(frame_hwnd, term_hwnd);
             } else if (wParam == SIZE_RESTORED && was_zoomed) {
                 was_zoomed = false;
@@ -3233,7 +3233,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 else
                     reset_window(wgs, 0);
                 tab_bar_adjust_window();
-                finddlg_size_to_frame(tab_bar_get_extra_height());
+                finddlg_pin_to_frame(tab_bar_get_extra_height());
                 adjust_terminal_window(frame_hwnd, term_hwnd);
             } else if (wParam == SIZE_MINIMIZED) {
                 /* do nothing */
