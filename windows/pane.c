@@ -6,10 +6,26 @@ typedef struct Pane {
     PointerArray tabbar_data;
     WinGuiFrontend *wgf_active;
     SizeTip size_tip;
+    FindDlg finddlg;
+    RECT rect;
 } Pane;
 
 HWND create_term_hwnd(const RECT *rect, void *user_data);
 void possible_term_dimensions(WinGuiFrontend *wgf, const RECT *term_rect, int *cols, int *rows);
+
+static void adjust_finddlg_rect(Pane *pane, RECT *rect) {
+    if (GetWindowLongPtr(pane->term_hwnd, GWL_STYLE) & WS_VSCROLL) {
+        RECT window_rect;
+        RECT client_rect;
+        GetWindowRect(pane->term_hwnd, &window_rect);
+        GetClientRect(pane->term_hwnd, &client_rect);
+        ClientToScreen(pane->term_hwnd, ((POINT *)&client_rect)+1);
+        rect->right -= window_rect.right - client_rect.right + 1;
+    }
+    RECT client_rect;
+    GetClientRect(frame_hwnd, &client_rect);
+    IntersectRect(rect, rect, &client_rect);
+}
 
 Pane *pane_create(const RECT *rect, PointerArraySetIndex set_index_callback) {
     Pane *pane = malloc(sizeof(Pane));
@@ -20,6 +36,8 @@ Pane *pane_create(const RECT *rect, PointerArraySetIndex set_index_callback) {
     pane->wgf_active = NULL;
     pane->term_hwnd = create_term_hwnd(&r, pane);
     size_tip_init(&pane->size_tip);
+    finddlg_init(&pane->finddlg);
+    pane->rect = *rect;
     return pane;
 }
 
@@ -28,19 +46,30 @@ void pane_destroy(Pane *pane) {
     pointer_array_uninit(&pane->tabbar_data);
     DestroyWindow(pane->term_hwnd);
     size_tip_uninit(&pane->size_tip);
+    finddlg_uninit(&pane->finddlg);
     free(pane);
 }
 
 void pane_dpi_changed(Pane *pane) {
     tab_bar_dpi_changed(&pane->tabbar);
+    finddlg_dpi_changed(&pane->finddlg);
 }
 
 HDWP pane_adjust_window(Pane *pane, const RECT *rect, HDWP hdwp) {
     hdwp = tab_bar_adjust_window(&pane->tabbar, rect, hdwp);
-    return DeferWindowPos(hdwp, pane->term_hwnd, NULL,
-                          rect->left, rect->top + tab_bar_common_height(),
-                          rect->right - rect->left, rect->bottom - rect->top - tab_bar_common_height(),
+
+    RECT r = {rect->left, rect->top + tab_bar_common_height(), rect->right, rect->bottom};
+    hdwp = DeferWindowPos(hdwp, pane->term_hwnd, NULL,
+                          r.left, r.top,
+                          r.right - r.left, r.bottom - r.top,
                           SWP_NOACTIVATE | SWP_NOZORDER);
+
+    if (pane->finddlg.hwnd) {
+        adjust_finddlg_rect(pane, &r);
+        finddlg_adjust_window(&pane->finddlg, &r);
+    }
+    pane->rect = *rect;
+    return hdwp;
 }
 
 void pane_select_tab(Pane *pane, int index) {
@@ -68,6 +97,7 @@ int pane_delete_tab(Pane *pane, int index) {
         }
 
     }
+    tab_bar_cancel_dragging(&pane->tabbar);
     tab_bar_remove_tab(&pane->tabbar, index);
     pointer_array_remove(&pane->tabbar_data, index);
     if (pointer_array_size(&pane->tabbar_data) == 0) {
@@ -93,15 +123,34 @@ void pane_set_tab_notified(Pane *pane, int index) {
     tab_bar_set_tab_notified(&pane->tabbar, index);
 }
 
-void pane_show_scrollbar(Pane *pane, bool show) {
+void pane_term_hwnd_style(Pane *pane, bool scrollbar, bool sunken_edge) {
     LONG nflg, flag = GetWindowLongPtr(pane->term_hwnd, GWL_STYLE);
-    if (show) {
+    LONG nexflag, exflag = GetWindowLongPtr(pane->term_hwnd, GWL_EXSTYLE);
+    nflg = flag;
+    nexflag = exflag;
+
+    if (scrollbar) {
         nflg |= WS_VSCROLL;
     } else {
         nflg &= ~WS_VSCROLL;
     }
-    if (nflg != flag) {
-        SetWindowLongPtr(pane->term_hwnd, GWL_STYLE, nflg);
+    if (sunken_edge) {
+        nexflag |= WS_EX_CLIENTEDGE;
+    } else {
+        nexflag &= ~WS_EX_CLIENTEDGE;
+    }
+    if (nflg != flag || nexflag != exflag) {
+        if (nflg != flag) {
+            SetWindowLongPtr(pane->term_hwnd, GWL_STYLE, nflg);
+        }
+        if (nexflag != exflag) {
+            SetWindowLongPtr(pane->term_hwnd, GWL_EXSTYLE, nexflag);
+        }
+        SetWindowPos(pane->term_hwnd, NULL, 0, 0, 0, 0,
+                     SWP_NOACTIVATE | SWP_NOCOPYBITS |
+                     SWP_NOMOVE | SWP_NOSIZE |
+                     SWP_NOZORDER |
+                     SWP_FRAMECHANGED);
     }
 }
 
@@ -197,4 +246,35 @@ void pane_get_possible_term_rect(Pane *pane, const RECT *pane_rect, RECT *rect) 
     rect->bottom = (pane_rect->bottom - (pane_rect->top + tab_bar_common_height())) - eh;
     rect->left = 0;
     rect->top = 0;
+}
+
+void pane_get_requied_rect(Pane *pane, const RECT *term_rect, RECT *rect) {
+    RECT window_rect;
+    RECT client_rect;
+    GetWindowRect(pane->term_hwnd, &window_rect);
+    GetClientRect(pane->term_hwnd, &client_rect);
+    int ew = (window_rect.right - window_rect.left) - (client_rect.right - client_rect.left);
+    int eh = (window_rect.bottom - window_rect.top) - (client_rect.bottom - client_rect.top);
+    rect->right = (term_rect->right - term_rect->left) + ew;
+    rect->bottom = (term_rect->bottom - term_rect->top) + eh + tab_bar_common_height();
+    rect->left = 0;
+    rect->top = 0;
+}
+
+void pane_clear_active_wgf(Pane *pane) {
+    pane->wgf_active = NULL;
+}
+
+HDWP pane_pin_window(Pane *pane, HDWP hdwp) {
+    return finddlg_pin_window(&pane->finddlg, hdwp);
+}
+
+void pane_show_finddlg(Pane *pane, WCHAR *pattern, bool activate, bool ignore_case, bool whole_word) {
+    RECT r = {pane->rect.left, pane->rect.top + tab_bar_common_height(), pane->rect.right, pane->rect.bottom};
+    adjust_finddlg_rect(pane, &r);
+    finddlg_show(&pane->finddlg, &r, pattern, activate, ignore_case, whole_word);
+}
+
+void pane_redraw_term(Pane *pane) {
+    InvalidateRect(pane->term_hwnd, NULL, TRUE);
 }

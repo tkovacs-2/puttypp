@@ -56,7 +56,7 @@ static RECT _currentHoverTabRect;
 
 static int _whichCloseClickDown = -1;
 
-static bool _isDragging = false;
+static HWND _isDragging = NULL;
 static bool _isDraggingOutside = false;
 static bool _mightBeDragging = false;
 static int _dragCount = 0;
@@ -482,8 +482,7 @@ static BOOL TabBarPlus_endDragging(HWND _hSelf)
         {
             TabBarPlus_endDragImage();
         }
-        _isDragging = false;
-        _isDraggingOutside = false;
+        _isDragging = NULL;
         if (GetCapture() == _hSelf)
         {
             ReleaseCapture();
@@ -521,10 +520,11 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
 
         case WM_RBUTTONDOWN :    //rightclick selects tab aswell
         {
-            if (_isDragging && _isDraggingOutside) {
-                TabBarPlus_notify(hwnd, TCN_OUTSIDE_CANCEL, _nTabDragged, NULL);
-            }
-            if (TabBarPlus_endDragging(hwnd)) {
+            if (_isDragging) {
+                TabBarPlus_endDragging(hwnd);
+                if (_isDraggingOutside) {
+                    TabBarPlus_notify(hwnd, TCN_OUTSIDE_CANCEL, _nTabDragged, NULL);
+                }
                 return TRUE;
             }
             CallWindowProc(_tabBarDefaultProc, hwnd, WM_LBUTTONDOWN, wParam, lParam);
@@ -548,7 +548,7 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
                     if (tabSelected >= 0)
                     {
                         _nTabDragged = tabSelected;
-                        _isDragging = true;
+                        _isDragging = hwnd;
                         _isDraggingOutside = false;
                         TabBarPlus_setDragCursor(false);
 
@@ -675,15 +675,13 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
             int currentTabOn = TabBarPlus_getTabIndexAt(hwnd, &p);
             if (_isDragging)
             {
+                TabBarPlus_endDragging(hwnd);
                 if (TabBarPlus_isPointOutside(hwnd, &p)) {
                     TabBarPlus_notify(hwnd, TCN_OUTSIDE_RELEASE, _nTabDragged, &p);
                 }
                 else if (_isDraggingOutside) {
                     TabBarPlus_notify(hwnd, TCN_OUTSIDE_CANCEL, _nTabDragged, NULL);
                 }
-            }
-            if (TabBarPlus_endDragging(hwnd))
-            {
                 return TRUE;
             }
 
@@ -710,10 +708,11 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
 
         case WM_CAPTURECHANGED :
         {
-            if (_isDragging) {
-                TabBarPlus_notify(hwnd, TCN_OUTSIDE_CANCEL, _nTabDragged, NULL);
-            }
-            if (TabBarPlus_endDragging(_hSelf)) {
+            if (_isDragging){
+                TabBarPlus_endDragging(_hSelf);
+                if (_isDraggingOutside) {
+                    TabBarPlus_notify(hwnd, TCN_OUTSIDE_CANCEL, _nTabDragged, NULL);
+                }
                 return TRUE;
             }
             break;
@@ -983,9 +982,24 @@ TabBar *tab_bar_get_from_hwnd(HWND hwnd) {
 void tab_bar_set_focused(TabBar *tab_bar, bool focused) {
     if (tab_bar->focused != focused) {
         tab_bar->focused = focused;
-        RECT rect;
-        TabCtrl_GetItemRect(tab_bar->hwnd, TabCtrl_GetCurSel(tab_bar->hwnd), &rect);
-        rect.bottom = rect.top + cyEdge + activeTopBarCorrection;
-        InvalidateRect(tab_bar->hwnd, &rect, FALSE);
+        int selected = TabCtrl_GetCurSel(tab_bar->hwnd);
+        if (selected >= 0) {
+            RECT rect;
+            TabCtrl_GetItemRect(tab_bar->hwnd, selected, &rect);
+            rect.bottom = rect.top + cyEdge + activeTopBarCorrection;
+            InvalidateRect(tab_bar->hwnd, &rect, FALSE);
+        }
+    }
+}
+
+void tab_bar_cancel_dragging(TabBar *tab_bar) {
+    if (_isDragging != tab_bar->hwnd) {
+        return;
+    }
+    if (_isDragging) {
+        TabBarPlus_endDragging(tab_bar->hwnd);
+        if (_isDraggingOutside) {
+            TabBarPlus_notify(tab_bar->hwnd, TCN_OUTSIDE_CANCEL, _nTabDragged, NULL);
+        }
     }
 }

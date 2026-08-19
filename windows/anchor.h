@@ -28,4 +28,6 @@ void anchor_init(HWND hwnd, const POINT *dpi_info, AnchorInfo *ai, int item_coun
 void anchor_apply(HWND hwnd, AnchorInfo *ai, int item_count);
 void anchor_change_dpi(const POINT *dpi_info, AnchorInfo *ai, int item_count);
 
+void anchor_preinit_item(const POINT *dpi_info, AnchorInfo *item, const RECT *parent_rect, const RECT *rect);
+
 #endif

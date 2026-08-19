@@ -243,6 +243,15 @@ static HDWP apply_layout(Split *split, HDWP hdwp) {
     return hdwp;
 }
 
+static HDWP pin_layout(Split *split, HDWP hdwp) {
+    if (split->type == SPLIT_TYPE_PANE) {
+        return pane_pin_window(split->pane, hdwp);
+    }
+    hdwp = pin_layout(split->first, hdwp);
+    hdwp = pin_layout(split->second, hdwp);
+    return hdwp;
+}
+
 static void apply_split_ratio(Split *split, float split_ratio) {
     split->split_ratio = split_ratio;
     split_plan_layout(split, &split->rect);
@@ -754,27 +763,21 @@ SplitType split_get_possible_split_rect(Split *split, bool slim, const POINT *po
 }
 
 Split *split_find_parent(Split *split, Pane *pane) {
-    assert(split->type != SPLIT_TYPE_PANE);
+    if (split->type == SPLIT_TYPE_PANE) {
+        return NULL;
+    }
     if (split->first->pane == pane || split->second->pane == pane) {
         return split;
     }
-    if (split->first->type != SPLIT_TYPE_PANE) {
-        Split *result = split_find_parent(split->first, pane);
-        if (result) {
-            return result;
-        }
+    Split *result = split_find_parent(split->first, pane);
+    if (result) {
+        return result;
     }
-    if (split->second->type != SPLIT_TYPE_PANE) {
-        Split *result = split_find_parent(split->second, pane);
-        if (result) {
-            return result;
-        }
-    }
-    return NULL;
+    return split_find_parent(split->second, pane);
 }
 
 Split *split_get_from_hwnd(HWND hwnd) {
-    Split *split = (Split *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+    return (Split *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
 }
 
 void split_update_sizetips(Split *split) {
@@ -805,4 +808,22 @@ void split_hide_sizetips(Split *split) {
         split_hide_sizetips(split_get_first(split));
         split_hide_sizetips(split_get_second(split));
     }
+}
+
+Pane *split_find_pane(Split *split) {
+    Pane *pane = split_get_pane(split);
+    if (pane) {
+        return pane;
+    }
+    pane = split_find_pane(split_get_first(split));
+    if (pane) {
+        return pane;
+    }
+    return split_find_pane(split_get_second(split));
+}
+
+void split_pin_layout(Split *split) {
+    HDWP hdwp = BeginDeferWindowPos(DEFER_BUFFER_SIZE);
+    hdwp = pin_layout(split, hdwp);
+    EndDeferWindowPos(hdwp);
 }

@@ -41,5 +41,6 @@ void tab_bar_clear_tab_notified(TabBar *tab_bar, int index);
 void tab_bar_import_tab(TabBar *tab_bar, TabBar *source, int target_index, int source_index);
 TabBar *tab_bar_get_from_hwnd(HWND hwnd);
 void tab_bar_set_focused(TabBar *tab_bar, bool focused);
+void tab_bar_cancel_dragging(TabBar *tab_bar);
 
 #endif

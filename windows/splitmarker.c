@@ -19,6 +19,8 @@ static LRESULT CALLBACK SplitMarkerProc(HWND hwnd, UINT message, WPARAM wparam, 
         Rectangle(hdc, 0, 0, r.right, r.bottom);
         EndPaint(hwnd, &ps);
         return 0;
+    case WM_DPICHANGED:
+        return 0;
     }
     }
     return DefWindowProc(hwnd, message, wparam, lparam);
@@ -41,20 +43,24 @@ void split_marker_init() {
 }
 
 void split_marker_show(const RECT *rect) {
+    RECT sr = *rect;
+    ClientToScreen(frame_hwnd, (POINT *)&sr);
+    ClientToScreen(frame_hwnd, ((POINT *)&sr)+1);
     if (split_marker_hwnd) {
-        SetWindowPos(split_marker_hwnd, NULL, rect->left, rect->top, rect->right - rect->left, rect->bottom - rect->top, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS);
+        SetWindowPos(split_marker_hwnd, NULL, sr.left, sr.top, sr.right - sr.left, sr.bottom - sr.top, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS);
     } else {
        split_marker_hwnd = CreateWindowEx(
-            0,
+            WS_EX_LAYERED,
             overlayClass,
             NULL,
-            WS_CHILD,
-            rect->left, rect->top, rect->right - rect->left, rect->bottom - rect->top,
+            WS_POPUP,
+            sr.left, sr.top, sr.right - sr.left, sr.bottom - sr.top,
             frame_hwnd,
             NULL,
             hinst,
             NULL);
-        SetWindowPos(split_marker_hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOACTIVATE|SWP_NOSIZE|SWP_NOMOVE|SWP_SHOWWINDOW);
+        SetLayeredWindowAttributes(split_marker_hwnd, 0, (BYTE)128, LWA_ALPHA);
+        ShowWindow(split_marker_hwnd, SW_SHOWNA);
     }
 }
 

@@ -26,6 +26,7 @@ Pane *split_merge(Split *split);
 
 void split_plan_layout(Split *split, const RECT *rect);
 void split_apply_layout(Split *split);
+void split_pin_layout(Split *split);
 
 const RECT *split_get_rect(Split *split);
 Pane *split_get_pane(Split *split);
@@ -45,3 +46,5 @@ Split *split_get_from_hwnd(HWND hwnd);
 void split_update_sizetips(Split *split);
 void split_move_sizetips(Split *split);
 void split_hide_sizetips(Split *split);
+
+Pane *split_find_pane(Split *split);
