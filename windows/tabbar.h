@@ -21,9 +21,9 @@ typedef struct TabBar {
     bool focused;
 } TabBar;
 
-void tab_bar_common_init(HFONT dpiAwareFont);
+void tab_bar_common_init(HFONT dpi_aware_font);
 void tab_bar_common_uninit();
-void tab_bar_common_dpi_changed(HFONT dpiAwareFont);
+void tab_bar_common_dpi_changed(HFONT dpi_aware_font);
 int tab_bar_common_height();
 
 void tab_bar_init(TabBar *tab_bar, const RECT *rect, void *user_data);

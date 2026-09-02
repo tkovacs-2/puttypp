@@ -14,7 +14,7 @@ extern HINSTANCE hinst;
 extern HWND frame_hwnd;
 extern POINT dpi_info;
 
-static const WCHAR dlg_class_name[] = L"FindDialog";
+static const WCHAR FIND_DLG_CLASS_NAME[] = L"FindDialog";
 static FindDlg *active_finddlg = NULL;
 
 typedef enum AdjustState {
@@ -86,8 +86,7 @@ static AnchorInfo anchor_info[] = {
 };
 const int anchor_info_size = sizeof(anchor_info) / sizeof(anchor_info[0]);
 
-static void set_font(FindDlg *finddlg)
-{
+static void set_font(FindDlg *finddlg) {
     assert(finddlg->hfont == NULL);
     finddlg->hfont = CreateFontW(-MulDiv(dlg_font_size, dpi_info.y, 72),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
@@ -95,8 +94,7 @@ static void set_font(FindDlg *finddlg)
         DEFAULT_PITCH | FF_DONTCARE, dlg_font_name);
 }
 
-static void set_base_units(FindDlg *finddlg)
-{
+static void set_base_units(FindDlg *finddlg) {
     HDC hdc = GetDC(frame_hwnd);
     HFONT old_font = SelectObject(hdc, finddlg->hfont);
     SIZE text_size;
@@ -112,18 +110,15 @@ static void set_base_units(FindDlg *finddlg)
     ReleaseDC(frame_hwnd, hdc);
 }
 
-static int dlu_scale_x(int dlu, const SIZE *base_units)
-{
+static int dlu_scale_x(int dlu, const SIZE *base_units) {
     return MulDiv(dlu, base_units->cx, 4);
 }
 
-static int dlu_scale_y(int dlu, const SIZE *base_units)
-{
+static int dlu_scale_y(int dlu, const SIZE *base_units) {
     return MulDiv(dlu, base_units->cy, 8);
 }
 
-static DlgRect dlu_scale_rect(const DlgRect *dlu_rect, const SIZE *base_units)
-{
+static DlgRect dlu_scale_rect(const DlgRect *dlu_rect, const SIZE *base_units) {
     DlgRect pixel_rect;
 
     pixel_rect.x = dlu_scale_x(dlu_rect->x, base_units);
@@ -133,14 +128,12 @@ static DlgRect dlu_scale_rect(const DlgRect *dlu_rect, const SIZE *base_units)
     return pixel_rect;
 }
 
-static void apply_alpha(HWND hwnd, bool active)
-{
+static void apply_alpha(HWND hwnd, bool active) {
     BYTE alpha = active ? (BYTE)255 : (BYTE)128;
     SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA);
 }
 
-static void notify_frame(FindDlg *finddlg, HWND hwnd, UINT code)
-{
+static void notify_frame(FindDlg *finddlg, HWND hwnd, UINT code) {
     if (finddlg->disable_notification) {
         return;
     }
@@ -151,8 +144,7 @@ static void notify_frame(FindDlg *finddlg, HWND hwnd, UINT code)
     SendMessage(frame_hwnd, WM_NOTIFY, (WPARAM)nm.idFrom, (LPARAM)&nm);
 }
 
-static AdjustState adjust_window(FindDlg *finddlg, const RECT *parent_rect, POINT *pos, SIZE *size)
-{
+static AdjustState adjust_window(FindDlg *finddlg, const RECT *parent_rect, POINT *pos, SIZE *size) {
     int parent_width = parent_rect->right - parent_rect->left;
     int parent_height = parent_rect->bottom - parent_rect->top;
     if (parent_width < finddlg->compact_window_size.cx / 4 || parent_height < finddlg->compact_window_size.cy) {
@@ -181,13 +173,10 @@ static AdjustState adjust_window(FindDlg *finddlg, const RECT *parent_rect, POIN
     return state;
 }
 
-static void layout_controls(FindDlg *finddlg, bool compact)
-{
+static void layout_controls(FindDlg *finddlg, bool compact) {
     if (finddlg->compact == compact) {
         return;
     }
-printf("layout_controls %d\n", (int)compact);
-fflush(stdout);
     const SIZE *window_size = compact ? &finddlg->compact_window_size : &finddlg->window_size;
     const DlgRect *edit_rect = compact ? &dlg_compact_edit_rect : &dlg_controls[0].rect;
     const int show_flag = compact ? SWP_HIDEWINDOW : SWP_SHOWWINDOW;
@@ -216,8 +205,7 @@ fflush(stdout);
     anchor_preinit_item(&dpi_info, &anchor_info[0], &parent_rect, &rect);
 }
 
-static void layout_window(FindDlg *finddlg, const RECT *parent_rect, bool activate)
-{
+static void layout_window(FindDlg *finddlg, const RECT *parent_rect, bool activate) {
     POINT pos;
     SIZE size;
     AdjustState state = adjust_window(finddlg, parent_rect, &pos, &size);
@@ -251,20 +239,19 @@ static void layout_window(FindDlg *finddlg, const RECT *parent_rect, bool activa
 #define WM_DPICHANGED 0x02E0
 #endif
 
-static LRESULT CALLBACK finddlg_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
+static LRESULT CALLBACK finddlg_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     FindDlg *finddlg = (FindDlg *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
 
     switch (msg) {
-    case WM_CREATE:
-        finddlg = (FindDlg *)((CREATESTRUCTW *)lParam)->lpCreateParams;
+      case WM_CREATE:
+        finddlg = (FindDlg *)((CREATESTRUCTW *)lparam)->lpCreateParams;
         SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)finddlg);
         return TRUE;
-    case WM_SIZE:
+      case WM_SIZE:
         anchor_apply(hwnd, anchor_info, anchor_info_size);
         return TRUE;
-    case WM_ACTIVATE:
-        if (LOWORD(wParam) == WA_INACTIVE) {
+      case WM_ACTIVATE:
+        if (LOWORD(wparam) == WA_INACTIVE) {
             active_finddlg = NULL;
             apply_alpha(hwnd, false);
             HWND focus = GetFocus();
@@ -276,71 +263,70 @@ static LRESULT CALLBACK finddlg_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             apply_alpha(hwnd, true);
         }
         return FALSE;
-    case WM_COMMAND:
-        switch (LOWORD(wParam)) {
-        case IDC_FINDDLG_EDIT:
-            if (HIWORD(wParam) == EN_CHANGE) {
+      case WM_COMMAND:
+        switch (LOWORD(wparam)) {
+          case IDC_FINDDLG_EDIT:
+            if (HIWORD(wparam) == EN_CHANGE) {
                 notify_frame(finddlg, hwnd, FINDDLG_EDIT_CHANGED);
                 return TRUE;
             }
             break;
-        case IDOK:
+          case IDOK:
             notify_frame(finddlg, hwnd, (GetKeyState(VK_SHIFT) & 0x8000) ?
                          FINDDLG_DOWN : FINDDLG_EDIT_ENTER);
             return TRUE;
-        case IDC_FINDDLG_UP:
+          case IDC_FINDDLG_UP:
             notify_frame(finddlg, hwnd, FINDDLG_UP);
             return TRUE;
-        case IDC_FINDDLG_DOWN:
+          case IDC_FINDDLG_DOWN:
             notify_frame(finddlg, hwnd, FINDDLG_DOWN);
             return TRUE;
-        case IDC_FINDDLG_IGNORE_CASE:
-            if (HIWORD(wParam) == BN_CLICKED) {
+          case IDC_FINDDLG_IGNORE_CASE:
+            if (HIWORD(wparam) == BN_CLICKED) {
                 notify_frame(finddlg, hwnd, FINDDLG_IGNORE_CASE);
                 return TRUE;
             }
             break;
-        case IDC_FINDDLG_WHOLE_WORD:
-            if (HIWORD(wParam) == BN_CLICKED) {
+          case IDC_FINDDLG_WHOLE_WORD:
+            if (HIWORD(wparam) == BN_CLICKED) {
                 notify_frame(finddlg, hwnd, FINDDLG_WHOLE_WORD);
                 return TRUE;
             }
             break;
-        case IDCANCEL:
-        case IDC_FINDDLG_CLOSE:
+          case IDCANCEL:
+          case IDC_FINDDLG_CLOSE:
             notify_frame(finddlg, hwnd, FINDDLG_CLOSE);
             DestroyWindow(hwnd);
             return TRUE;
-        default:
+          default:
             break;
         }
         return FALSE;
-    case WM_NCDESTROY:
+      case WM_NCDESTROY:
         finddlg->hwnd = NULL;
         finddlg->last_focus = NULL;
         DeleteObject(finddlg->hfont);
         finddlg->hfont = NULL;
         active_finddlg = NULL;
         return 0;
-    case WM_DPICHANGED:
+      case WM_DPICHANGED:
         return 0;
-    case WM_SETFOCUS:
+      case WM_SETFOCUS:
         if (!finddlg->last_focus) {
             finddlg->last_focus = GetDlgItem(hwnd, IDC_FINDDLG_EDIT);
         }
         SetFocus(finddlg->last_focus);
         return FALSE;
-    case WM_SYSCOMMAND:
-        if (wParam == SC_CLOSE) {
+      case WM_SYSCOMMAND:
+        if (wparam == SC_CLOSE) {
             return TRUE;
         }
         break;
     }
-    return DefWindowProcW(hwnd, msg, wParam, lParam);
+    return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
-static void register_finddlg_class()
-{
+static void register_finddlg_class() {
     static bool registered = false;
 
     if (registered) {
@@ -353,7 +339,7 @@ static void register_finddlg_class()
     wc.hInstance = hinst;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_3DFACE + 1);
-    wc.lpszClassName = dlg_class_name;
+    wc.lpszClassName = FIND_DLG_CLASS_NAME;
 
     RegisterClassW(&wc);
     registered = true;
@@ -371,7 +357,7 @@ static HWND create_dialog(FindDlg *finddlg) {
     dr = dlu_scale_rect(&dlg_rect, &finddlg->base_units);
     finddlg->window_size.cx = dr.width;
     finddlg->window_size.cy = dr.height;
-    HWND hwnd = CreateWindowExW(WS_EX_LAYERED, dlg_class_name, L"", WS_POPUP,
+    HWND hwnd = CreateWindowExW(WS_EX_LAYERED, FIND_DLG_CLASS_NAME, L"", WS_POPUP,
         dr.x, dr.y, dr.width, dr.height, frame_hwnd, NULL, hinst, finddlg);
     apply_alpha(hwnd, GetForegroundWindow() == hwnd);
     for (int i = 0; i < dlg_control_count; i++) {
@@ -387,19 +373,17 @@ static HWND create_dialog(FindDlg *finddlg) {
     return hwnd;
 }
 
-void finddlg_init(FindDlg *finddlg)
-{
+void finddlg_init(FindDlg *finddlg, void *user_data) {
     memset(finddlg, 0, sizeof(FindDlg));
     finddlg->hidden = true;
+    finddlg->user_data = user_data;
 }
 
-void finddlg_uninit(FindDlg *finddlg)
-{
+void finddlg_uninit(FindDlg *finddlg) {
     finddlg_hide(finddlg);
 }
 
-void finddlg_show(FindDlg *finddlg, const RECT *parent_rect, WCHAR *pattern, bool activate, bool ignore_case, bool whole_word)
-{
+void finddlg_show(FindDlg *finddlg, const RECT *parent_rect, WCHAR *pattern, bool activate, bool ignore_case, bool whole_word) {
     if (finddlg->hwnd == NULL) {
         finddlg->hwnd = create_dialog(finddlg);
         finddlg->compact = false;
@@ -416,24 +400,21 @@ void finddlg_show(FindDlg *finddlg, const RECT *parent_rect, WCHAR *pattern, boo
     finddlg->disable_notification = false;
 }
 
-void finddlg_hide(FindDlg *finddlg)
-{
+void finddlg_hide(FindDlg *finddlg) {
     if (finddlg->hwnd == NULL) {
         return;
     }
     DestroyWindow(finddlg->hwnd);
 }
 
-void finddlg_adjust_window(FindDlg *finddlg, const RECT *parent_rect)
-{
+void finddlg_adjust_window(FindDlg *finddlg, const RECT *parent_rect) {
     if (finddlg->hwnd == NULL) {
         return;
     }
     layout_window(finddlg, parent_rect, false);
 }
 
-HDWP finddlg_pin_window(FindDlg *finddlg, HDWP hdwp)
-{
+HDWP finddlg_pin_window(FindDlg *finddlg, HDWP hdwp) {
     if (finddlg->hwnd == NULL || finddlg->hidden) {
         return hdwp;
     }
@@ -442,8 +423,7 @@ HDWP finddlg_pin_window(FindDlg *finddlg, HDWP hdwp)
     return DeferWindowPos(hdwp, finddlg->hwnd, NULL, pos.x, pos.y, 0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE);
 }
 
-int finddlg_get_text(FindDlg *finddlg, WCHAR *buffer, int buffer_chars)
-{
+int finddlg_get_text(FindDlg *finddlg, WCHAR *buffer, int buffer_chars) {
     if (finddlg->hwnd == NULL) {
         return 0;
     }
@@ -454,29 +434,29 @@ int finddlg_get_text(FindDlg *finddlg, WCHAR *buffer, int buffer_chars)
     return GetWindowTextW(hedit, buffer, buffer_chars);
 }
 
-bool finddlg_get_ignore_case(FindDlg *finddlg)
-{
+bool finddlg_get_ignore_case(FindDlg *finddlg) {
     if (finddlg->hwnd == NULL) {
         return false;
     }
     return IsDlgButtonChecked(finddlg->hwnd, IDC_FINDDLG_IGNORE_CASE) == BST_CHECKED;
 }
 
-bool finddlg_get_whole_word(FindDlg *finddlg)
-{
+bool finddlg_get_whole_word(FindDlg *finddlg) {
     if (finddlg->hwnd == NULL) {
         return false;
     }
     return IsDlgButtonChecked(finddlg->hwnd, IDC_FINDDLG_WHOLE_WORD) == BST_CHECKED;
 }
 
-bool finddlg_is_dialog_message(MSG *msg)
-{
+bool finddlg_is_dialog_message(MSG *msg) {
     return (active_finddlg && IsDialogMessageW(active_finddlg->hwnd, msg));
 }
 
-void finddlg_dpi_changed(FindDlg *finddlg)
-{
+FindDlg *finddlg_get_from_hwnd(HWND hwnd) {
+    return (FindDlg *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+}
+
+void finddlg_dpi_changed(FindDlg *finddlg) {
     if (finddlg->hwnd == NULL) {
         return;
     }

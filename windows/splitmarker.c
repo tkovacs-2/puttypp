@@ -1,15 +1,14 @@
 #include <windows.h>
 
-static const char *const overlayClass = "OverlayClass";
+static const WCHAR SPLIT_MARKER_CLASS_NAME[] = L"SplitMarker";
 static HWND split_marker_hwnd = NULL;
 
 extern HWND frame_hwnd;
-extern HINSTANCE inst;
+extern HINSTANCE hinst;
 
-static LRESULT CALLBACK SplitMarkerProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
-{
+static LRESULT CALLBACK split_marker_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
-    case WM_PAINT: {
+      case WM_PAINT: {
         PAINTSTRUCT ps;
         RECT r;
         GetClientRect(hwnd, &r);
@@ -19,18 +18,18 @@ static LRESULT CALLBACK SplitMarkerProc(HWND hwnd, UINT message, WPARAM wparam, 
         Rectangle(hdc, 0, 0, r.right, r.bottom);
         EndPaint(hwnd, &ps);
         return 0;
-    case WM_DPICHANGED:
+      }
+      case WM_DPICHANGED:
         return 0;
     }
-    }
-    return DefWindowProc(hwnd, message, wparam, lparam);
+    return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
 void split_marker_init() {
-    WNDCLASS wndclass;
+    WNDCLASSW wndclass;
 
     wndclass.style = 0;
-    wndclass.lpfnWndProc = SplitMarkerProc;
+    wndclass.lpfnWndProc = split_marker_proc;
     wndclass.cbClsExtra = 0;
     wndclass.cbWndExtra = 0;
     wndclass.hInstance = hinst;
@@ -38,8 +37,8 @@ void split_marker_init() {
     wndclass.hCursor = LoadCursor(NULL, MAKEINTRESOURCE(IDC_ARROW));
     wndclass.hbrBackground = NULL;
     wndclass.lpszMenuName = NULL;
-    wndclass.lpszClassName = overlayClass;
-    RegisterClass(&wndclass);
+    wndclass.lpszClassName = SPLIT_MARKER_CLASS_NAME;
+    RegisterClassW(&wndclass);
 }
 
 void split_marker_show(const RECT *rect) {
@@ -49,9 +48,9 @@ void split_marker_show(const RECT *rect) {
     if (split_marker_hwnd) {
         SetWindowPos(split_marker_hwnd, NULL, sr.left, sr.top, sr.right - sr.left, sr.bottom - sr.top, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS);
     } else {
-       split_marker_hwnd = CreateWindowEx(
+       split_marker_hwnd = CreateWindowExW(
             WS_EX_LAYERED,
-            overlayClass,
+            SPLIT_MARKER_CLASS_NAME,
             NULL,
             WS_POPUP,
             sr.left, sr.top, sr.right - sr.left, sr.bottom - sr.top,

@@ -57,7 +57,7 @@ static LRESULT CALLBACK SizeTipWndProc(HWND hwnd, UINT message, WPARAM wparam, L
       }
     }
 
-    return DefWindowProc(hwnd, message, wparam, lparam);
+    return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
 void size_tip_common_init(HFONT dpi_aware_font) {

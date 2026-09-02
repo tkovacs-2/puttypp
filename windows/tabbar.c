@@ -771,14 +771,14 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
     return CallWindowProc(_tabBarDefaultProc, hwnd, Message, wParam, lParam);
 }
 
-void tab_bar_common_init(HFONT dpiAwareFont) {
+void tab_bar_common_init(HFONT dpi_aware_font) {
     INITCOMMONCONTROLSEX icce;
     icce.dwSize = sizeof(icce);
     icce.dwICC = ICC_TAB_CLASSES;
     InitCommonControlsEx(&icce);
     _hImglst = ImageList_Create(1, 1, ILC_COLOR4, 0, 10);
 
-    tab_bar_common_dpi_changed(dpiAwareFont);
+    tab_bar_common_dpi_changed(dpi_aware_font);
 
     cxEdge = GetSystemMetrics(SM_CXEDGE);
     cyEdge = GetSystemMetrics(SM_CYEDGE);
@@ -788,7 +788,7 @@ void tab_bar_common_uninit() {
     ImageList_Destroy(_hImglst);
 }
 
-void tab_bar_common_dpi_changed(HFONT dpiAwareFont) {
+void tab_bar_common_dpi_changed(HFONT dpi_aware_font) {
     imageZone.cx = DPIManager_scaleX(16);
     imageZone.cy = DPIManager_scaleY(13);
     notifyBlinkZone.cx = DPIManager_scaleX(8);
@@ -809,7 +809,7 @@ void tab_bar_common_dpi_changed(HFONT dpiAwareFont) {
         DestroyIcon(hIcon);
     }
 
-    _hFont = dpiAwareFont;
+    _hFont = dpi_aware_font;
     tab_extra_height = 0;
 }
 

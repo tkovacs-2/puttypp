@@ -17,8 +17,8 @@ extern HINSTANCE hinst;
 extern HWND frame_hwnd;
 extern POINT dpi_info;
 
-static const char SPLITTER_CLASS_NAME[] = "SplitterWindow";
-static const char SPLITTER_MOVE_CLASS_NAME[] = "SplitterMoveWindow";
+static const WCHAR SPLITTER_CLASS_NAME[] = L"SplitterWindow";
+static const WCHAR SPLITTER_MOVE_CLASS_NAME[] = L"SplitterMoveWindow";
 static Split *dragging_splitter = NULL;
 static BOOL showing_splitter_menu = FALSE;
 static BOOL drag_full_windows = FALSE;
@@ -149,7 +149,7 @@ static void create_splitter(Split *split) {
         width = split->rect.right - split->rect.left;
         height = splitter_height;
     }
-    split->splitter_hwnd = CreateWindowExA(0, SPLITTER_CLASS_NAME,
+    split->splitter_hwnd = CreateWindowExW(0, SPLITTER_CLASS_NAME,
                             NULL,
                             WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
                             x, y, width, height,
@@ -181,7 +181,7 @@ static void create_splitter_move(Split *split) {
     RECT rect;
     GetWindowRect(split->splitter_hwnd, &rect);
     MapWindowPoints(NULL, frame_hwnd, (POINT *)&rect, 2);
-    splitter_move_hwnd = CreateWindowExA(0, SPLITTER_MOVE_CLASS_NAME,
+    splitter_move_hwnd = CreateWindowExW(0, SPLITTER_MOVE_CLASS_NAME,
                             NULL,
                             WS_CHILD,
                             rect.left, rect.top,
@@ -426,34 +426,34 @@ static void end_splitter_move() {
     }
 }
 
-static LRESULT CALLBACK SplitterMoveProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
+static LRESULT CALLBACK splitter_move_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
     switch (message) {
-    case WM_PAINT: {
+      case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
         paint_splitter(hwnd, hdc);
         EndPaint(hwnd, &ps);
         return 0;
-    }
+      }
     }
 
-    return DefWindowProc(hwnd, message, wparam, lparam);
+    return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
-static LRESULT CALLBACK SplitterProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
+static LRESULT CALLBACK splitter_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
     Split *split = (Split *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
     switch (message) {
-    case WM_CREATE:
+      case WM_CREATE:
         SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)((CREATESTRUCTA *)lparam)->lpCreateParams);
         return 0;
 
-    case WM_SETCURSOR:
+      case WM_SETCURSOR:
         SetCursor(showing_splitter_menu ? LoadCursor(NULL, IDC_ARROW) : split->splitter_cursor);
         return TRUE;
 
-    case WM_LBUTTONDOWN:
+      case WM_LBUTTONDOWN:
         dragging_splitter = split;
         if (!drag_full_windows) {
             create_splitter_move(split);
@@ -462,7 +462,7 @@ static LRESULT CALLBACK SplitterProc(HWND hwnd, UINT message, WPARAM wparam, LPA
         SetCursor(split->splitter_cursor);
         return 0;
 
-    case WM_MOUSEMOVE:
+      case WM_MOUSEMOVE:
         if (dragging_splitter) {
             POINT point;
             translate_lparam_to_screen(hwnd, lparam, &point);
@@ -483,7 +483,7 @@ static LRESULT CALLBACK SplitterProc(HWND hwnd, UINT message, WPARAM wparam, LPA
         }
         break;
 
-    case WM_LBUTTONUP:
+      case WM_LBUTTONUP:
         if (dragging_splitter && splitter_move_hwnd) {
             plan_split_ratio(split);
             split_apply_layout(split);
@@ -491,11 +491,11 @@ static LRESULT CALLBACK SplitterProc(HWND hwnd, UINT message, WPARAM wparam, LPA
         end_splitter_move();
         return 0;
 
-    case WM_CAPTURECHANGED:
+      case WM_CAPTURECHANGED:
         end_splitter_move();
         return 0;
 
-    case WM_RBUTTONDOWN: {
+      case WM_RBUTTONDOWN: {
         if (dragging_splitter) {
             end_splitter_move();
         } else {
@@ -504,9 +504,9 @@ static LRESULT CALLBACK SplitterProc(HWND hwnd, UINT message, WPARAM wparam, LPA
             show_splitter_menu(split, hwnd, point.x, point.y);
         }
         return 0;
-    }
+      }
 
-    case WM_PAINT: {
+      case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
         if (splitter_move_hwnd && dragging_splitter == split) {
@@ -516,25 +516,25 @@ static LRESULT CALLBACK SplitterProc(HWND hwnd, UINT message, WPARAM wparam, LPA
         }
         EndPaint(hwnd, &ps);
         return 0;
-    }
+      }
     }
 
-    return DefWindowProc(hwnd, message, wparam, lparam);
+    return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
 void split_common_init(PointerArraySetIndex set_index_callback) {
-    WNDCLASSA splitter_class;
+    WNDCLASSW splitter_class;
     ZeroMemory(&splitter_class, sizeof(splitter_class));
-    splitter_class.lpfnWndProc = SplitterProc;
+    splitter_class.lpfnWndProc = splitter_proc;
     splitter_class.hInstance = hinst;
     splitter_class.hCursor = NULL;
     splitter_class.hbrBackground = NULL;
     splitter_class.lpszClassName = SPLITTER_CLASS_NAME;
-    RegisterClassA(&splitter_class);
+    RegisterClassW(&splitter_class);
 
-    splitter_class.lpfnWndProc = SplitterMoveProc;
+    splitter_class.lpfnWndProc = splitter_move_proc;
     splitter_class.lpszClassName = SPLITTER_MOVE_CLASS_NAME;
-    RegisterClassA(&splitter_class);
+    RegisterClassW(&splitter_class);
 
     pane_set_index_callback = set_index_callback;
 
@@ -597,17 +597,17 @@ Pane *split_merge(Split *split) {
     Split *destroyed;
     Split *extended;
     if (split->first->pane && split->second->pane &&
-        pane_get_tab_count(split->first->pane) > 0 &&
-        pane_get_tab_count(split->second->pane) > 0) {
+        pane_get_session_count(split->first->pane) > 0 &&
+        pane_get_session_count(split->second->pane) > 0) {
         destroyed = split->second;
         extended = split->first;
-        for (int i = 0; i < pane_get_tab_count(destroyed->pane); i++) {
-            pane_import_tab(extended->pane, destroyed->pane, i);
+        for (int i = 0; i < pane_get_session_count(destroyed->pane); i++) {
+            pane_import_session(extended->pane, destroyed->pane, i);
         }
-    } else if (split->first->pane && pane_get_tab_count(split->first->pane) == 0) {
+    } else if (split->first->pane && pane_get_session_count(split->first->pane) == 0) {
         destroyed = split->first;
         extended = split->second;
-    } else if (split->second->pane && pane_get_tab_count(split->second->pane) == 0) {
+    } else if (split->second->pane && pane_get_session_count(split->second->pane) == 0) {
         destroyed = split->second;
         extended = split->first;
     } else {

@@ -1,17 +1,17 @@
-typedef struct WinGuiFrontend WinGuiFrontend;
+typedef struct WinGuiSession WinGuiSession;
 
 typedef struct Pane {
     TabBar tabbar;
     HWND term_hwnd;
     PointerArray tabbar_data;
-    WinGuiFrontend *wgf_active;
+    WinGuiSession *active_session;
     SizeTip size_tip;
     FindDlg finddlg;
     RECT rect;
 } Pane;
 
-HWND create_term_hwnd(const RECT *rect, void *user_data);
-void possible_term_dimensions(WinGuiFrontend *wgf, const RECT *term_rect, int *cols, int *rows);
+HWND create_term_window(const RECT *rect, void *user_data);
+void possible_term_dimensions(WinGuiSession *wgf, const RECT *term_rect, int *cols, int *rows);
 
 static void adjust_finddlg_rect(Pane *pane, RECT *rect) {
     if (GetWindowLongPtr(pane->term_hwnd, GWL_STYLE) & WS_VSCROLL) {
@@ -33,10 +33,10 @@ Pane *pane_create(const RECT *rect, PointerArraySetIndex set_index_callback) {
     pointer_array_init(&pane->tabbar_data, set_index_callback);
     RECT r = *rect;
     r.top += tab_bar_common_height();
-    pane->wgf_active = NULL;
+    pane->active_session = NULL;
     pane->term_hwnd = create_term_hwnd(&r, pane);
     size_tip_init(&pane->size_tip);
-    finddlg_init(&pane->finddlg);
+    finddlg_init(&pane->finddlg, pane);
     pane->rect = *rect;
     return pane;
 }
@@ -72,21 +72,21 @@ HDWP pane_adjust_window(Pane *pane, const RECT *rect, HDWP hdwp) {
     return hdwp;
 }
 
-void pane_select_tab(Pane *pane, int index) {
+void pane_select_session(Pane *pane, int index) {
     tab_bar_clear_tab_notified(&pane->tabbar, index);
     tab_bar_select_tab(&pane->tabbar, index);
-    pane->wgf_active = ((WinGuiFrontend *)pointer_array_get(&pane->tabbar_data, index));
+    pane->active_session = ((WinGuiSession *)pointer_array_get(&pane->tabbar_data, index));
 }
 
-int pane_get_active_tab(Pane *pane) {
+int pane_get_active_session_index(Pane *pane) {
     return tab_bar_get_active_tab(&pane->tabbar);
 }
 
-void pane_tabs_exchanged(Pane *pane, int old_index, int new_index) {
+void pane_sessions_exchanged(Pane *pane, int old_index, int new_index) {
     pointer_array_exchange(&pane->tabbar_data, old_index, new_index);
 }
 
-int pane_delete_tab(Pane *pane, int index) {
+int pane_delete_session(Pane *pane, int index) {
     int new_index = -1;
     int current_index = tab_bar_get_active_tab(&pane->tabbar);
     if (pointer_array_size(&pane->tabbar_data) > 1 && current_index == index) {
@@ -101,25 +101,25 @@ int pane_delete_tab(Pane *pane, int index) {
     tab_bar_remove_tab(&pane->tabbar, index);
     pointer_array_remove(&pane->tabbar_data, index);
     if (pointer_array_size(&pane->tabbar_data) == 0) {
-        pane->wgf_active = NULL;
+        pane->active_session = NULL;
     }
     return new_index;
 }
 
-void pane_insert_tab(Pane *pane, int index, const char *title, int image, WinGuiFrontend *wgf) {
+void pane_insert_session(Pane *pane, int index, const char *title, int image, WinGuiSession *wgf) {
     tab_bar_insert_tab(&pane->tabbar, index, title, image);
     pointer_array_insert(&pane->tabbar_data, index, wgf);
 }
 
-void pane_set_tab_title(Pane *pane, int index, const char *title) {
+void pane_set_session_title(Pane *pane, int index, const char *title) {
     tab_bar_set_tab_title(&pane->tabbar, index, title);
 }
 
-void pane_set_tab_unusable(Pane *pane, int index, bool unusable) {
+void pane_set_session_unusable(Pane *pane, int index, bool unusable) {
     tab_bar_set_tab_unusable(&pane->tabbar, index, unusable);
 }
 
-void pane_set_tab_notified(Pane *pane, int index) {
+void pane_set_session_notified(Pane *pane, int index) {
     tab_bar_set_tab_notified(&pane->tabbar, index);
 }
 
@@ -176,19 +176,19 @@ int pane_get_scrollbar_track_pos(Pane *pane) {
     return si.nTrackPos;
 }
 
-WinGuiFrontend *pane_get_active_wgf(Pane *pane) {
-    return pane->wgf_active;
+WinGuiSession *pane_get_active_session(Pane *pane) {
+    return pane->active_session;
 }
 
-WinGuiFrontend *pane_get_wgf(Pane *pane, int index) {
-    return (WinGuiFrontend *)pointer_array_get(&pane->tabbar_data, index);
+WinGuiSession *pane_get_session(Pane *pane, int index) {
+    return (WinGuiSession *)pointer_array_get(&pane->tabbar_data, index);
 }
 
-int pane_get_tab_count(Pane *pane) {
+int pane_get_session_count(Pane *pane) {
     return pointer_array_size(&pane->tabbar_data);
 }
 
-int pane_import_tab(Pane *pane, Pane *source, int index) {
+int pane_import_session(Pane *pane, Pane *source, int index) {
     assert(pane != source);
 
     int target_index = pointer_array_size(&pane->tabbar_data);
@@ -206,6 +206,11 @@ Pane *pane_get_from_term_hwnd(HWND hwnd) {
     return (Pane *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
 }
 
+Pane *pane_get_from_finddlg_hwnd(HWND hwnd) {
+    FindDlg *finddlg = finddlg_get_from_hwnd(hwnd);
+    return (Pane *)finddlg->user_data;
+}
+
 void pane_set_focused(Pane *pane, bool focused) {
     tab_bar_set_focused(&pane->tabbar, focused);
     if (focused) {
@@ -217,7 +222,7 @@ void pane_update_sizetip(Pane *pane, const RECT *rect, const POINT *pos) {
     RECT term_rect;
     pane_get_possible_term_rect(pane, rect, &term_rect);
     int cols, rows;
-    possible_term_dimensions(pane->wgf_active, &term_rect, &cols, &rows);
+    possible_term_dimensions(pane->active_session, &term_rect, &cols, &rows);
     POINT p = {pos->x, pos->y + tab_bar_common_height()};
     size_tip_update(&pane->size_tip, cols, rows, &p);
 }
@@ -261,8 +266,8 @@ void pane_get_requied_rect(Pane *pane, const RECT *term_rect, RECT *rect) {
     rect->top = 0;
 }
 
-void pane_clear_active_wgf(Pane *pane) {
-    pane->wgf_active = NULL;
+void pane_clear_active_session(Pane *pane) {
+    pane->active_session = NULL;
 }
 
 HDWP pane_pin_window(Pane *pane, HDWP hdwp) {
@@ -275,6 +280,22 @@ void pane_show_finddlg(Pane *pane, WCHAR *pattern, bool activate, bool ignore_ca
     finddlg_show(&pane->finddlg, &r, pattern, activate, ignore_case, whole_word);
 }
 
-void pane_redraw_term(Pane *pane) {
-    InvalidateRect(pane->term_hwnd, NULL, TRUE);
+void pane_hide_finddlg(Pane *pane) {
+    finddlg_hide(&pane->finddlg);
+}
+
+int pane_get_finddlg_text(Pane *pane, WCHAR *buffer, int buffer_chars) {
+    return finddlg_get_text(&pane->finddlg, buffer, buffer_chars);
+}
+
+bool pane_get_finddlg_ignore_case(Pane *pane) {
+    return finddlg_get_ignore_case(&pane->finddlg);
+}
+
+bool pane_get_finddlg_whole_word(Pane *pane) {
+    return finddlg_get_whole_word(&pane->finddlg);
+}
+
+HWND pane_get_term_hwnd(Pane *pane) {
+    return pane->term_hwnd;
 }
