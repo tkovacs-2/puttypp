@@ -101,18 +101,18 @@
 #define VK_PACKET 0xE7
 #endif
 
-typedef struct WinGuiFrontend WinGuiFrontend;
+typedef struct WinGuiSession WinGuiSession;
 
 static Mouse_Button translate_button(Conf *conf, Mouse_Button button);
-static void show_mouseptr(WinGuiFrontend *wgf, bool show);
+static void show_mouseptr(WinGuiSession *wgs, bool show);
 static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
-static int TranslateKey(WinGuiFrontend *, UINT message, WPARAM wParam, LPARAM lParam,
+static int TranslateKey(WinGuiSession *, UINT message, WPARAM wParam, LPARAM lParam,
                         unsigned char *output);
-static void init_palette(WinGuiFrontend *);
-static void init_fonts(WinGuiFrontend *, int, int);
+static void init_palette(WinGuiSession *);
+static void init_fonts(WinGuiSession *, int, int);
 static void init_dpi_info(void);
-static void another_font(WinGuiFrontend *, int);
-static void deinit_fonts(WinGuiFrontend *);
+static void another_font(WinGuiSession *, int);
+static void deinit_fonts(WinGuiSession *);
 static void set_input_locale(HKL);
 static void update_savedsess_menu(void);
 static void init_winfuncs(void);
@@ -126,12 +126,12 @@ static void paste_clipdata(Terminal *term, WPARAM wParam, LPARAM lParam);
 static void setup_clipboards(Terminal *, Conf *);
 
 /* Window layout information */
-static void reset_window(WinGuiFrontend *, int);
+static void reset_window(WinGuiSession *, int);
 static int extra_width, extra_height;
 static bool was_zoomed = false;
 
 static void flash_window(int mode);
-static void sys_cursor_update(WinGuiFrontend *);
+static void sys_cursor_update(WinGuiSession *);
 static bool get_fullscreen_rect(RECT * ss);
 
 static int kbd_codepage;
@@ -145,7 +145,7 @@ static struct {
 enum { SYSMENU, CTXMENU };
 static HMENU savedsess_menu;
 
-static void conf_cache_data(WinGuiFrontend *);
+static void conf_cache_data(WinGuiSession *);
 
 static struct sesslist sesslist;       /* for saved-session menu */
 
@@ -188,7 +188,7 @@ static UINT wm_mousewheel = WM_MOUSEWHEEL;
     (((wch) >= 0x180B && (wch) <= 0x180D) || /* MONGOLIAN FREE VARIATION SELECTOR */ \
      ((wch) >= 0xFE00 && (wch) <= 0xFE0F)) /* VARIATION SELECTOR 1-16 */
 
-struct WinGuiFrontend {
+struct WinGuiSession {
     int caret_x;
     int caret_y;
     Ldisc *ldisc;
@@ -424,8 +424,8 @@ static const SeatVtable win_seat_vt = {
 
 static void win_gui_eventlog(LogPolicy *lp, const char *string)
 {
-    WinGuiFrontend* wgf = container_of(lp, WinGuiFrontend, logpolicy);
-    dlg_eventlog(&wgf->eventlogstuff, string);
+    WinGuiSession* wgs = container_of(lp, WinGuiSession, logpolicy);
+    dlg_eventlog(&wgs->eventlogstuff, string);
 }
 
 static int win_gui_askappend(LogPolicy *lp, Filename *filename,
@@ -437,12 +437,12 @@ static int win_gui_askappend(LogPolicy *lp, Filename *filename,
 
 static void win_gui_logging_error(LogPolicy *lp, const char *event)
 {
-    WinGuiFrontend *wgf = container_of(lp, WinGuiFrontend, logpolicy);
+    WinGuiSession *wgs = container_of(lp, WinGuiSession, logpolicy);
 
     /* Send 'can't open log file' errors to the terminal window.
      * (Marked as stderr, although terminal.c won't care.) */
-    seat_stderr_pl(&wgf->seat, ptrlen_from_asciz(event));
-    seat_stderr_pl(&wgf->seat, PTRLEN_LITERAL("\r\n"));
+    seat_stderr_pl(&wgs->seat, ptrlen_from_asciz(event));
+    seat_stderr_pl(&wgs->seat, PTRLEN_LITERAL("\r\n"));
 }
 
 const LogPolicyVtable win_gui_logpolicy_vt = {
@@ -452,50 +452,50 @@ const LogPolicyVtable win_gui_logpolicy_vt = {
     .verbose = null_lp_verbose_yes,
 };
 
-static WinGuiFrontend *wgf_active = NULL;
+static WinGuiSession *wgs_active = NULL;
 
-static void refresh_find_match_mask(WinGuiFrontend *wgf)
+static void refresh_find_match_mask(WinGuiSession *wgs)
 {
-    if (find_match_mask.cells && !wgf->find.update_finddlg_pending) {
-        assert(wgf->find.pattern_len > 0);
-        find_match_mask_alloc(&find_match_mask, wgf->term->rows, wgf->term->cols);
-        find_display(wgf->term, wgf->find.pattern, wgf->find.pattern_len, wgf->find.ignore_case, wgf->find.whole_word, &find_match_mask);
+    if (find_match_mask.cells && !wgs->find.update_finddlg_pending) {
+        assert(wgs->find.pattern_len > 0);
+        find_match_mask_alloc(&find_match_mask, wgs->term->rows, wgs->term->cols);
+        find_display(wgs->term, wgs->find.pattern, wgs->find.pattern_len, wgs->find.ignore_case, wgs->find.whole_word, &find_match_mask);
     }
 }
 
-static void add_error_message_to_term(WinGuiFrontend *wgf, const char *msg) {
-    term_data(wgf->term, "\r\n", 2);
-    term_set_trust_status(wgf->term, true);
-    term_data(wgf->term, "\033[31m", 5);
+static void add_error_message_to_term(WinGuiSession *wgs, const char *msg) {
+    term_data(wgs->term, "\r\n", 2);
+    term_set_trust_status(wgs->term, true);
+    term_data(wgs->term, "\033[31m", 5);
     const char *p0 = msg;
     const char *p = msg;
     while (*p) {
         if (*p == '\n' && p[1] != 0 && p != msg && p[-1] != '\r') {
-            term_data(wgf->term, p0, p-p0);
-            term_data(wgf->term, "\r\n", 2);
+            term_data(wgs->term, p0, p-p0);
+            term_data(wgs->term, "\r\n", 2);
             p++;
             p0 = p;
         }
         p++;
     }
-    term_data(wgf->term, p0, p-p0);
-    term_data(wgf->term, "\033[0m", 4);
-    term_set_trust_status(wgf->term, false);
+    term_data(wgs->term, p0, p-p0);
+    term_data(wgs->term, "\033[0m", 4);
+    term_set_trust_status(wgs->term, false);
 }
 
-static void start_backend(WinGuiFrontend *wgf)
+static void start_backend(WinGuiSession *wgs)
 {
-    Conf *conf = wgf->conf;
-    Terminal *term = wgf->term;
+    Conf *conf = wgs->conf;
+    Terminal *term = wgs->term;
     const struct BackendVtable *vt;
     char *realhost = NULL;
 
-    wgf->cmdline_get_passwd_state = cmdline_get_passwd_input_state_new;
+    wgs->cmdline_get_passwd_state = cmdline_get_passwd_input_state_new;
 
     vt = backend_vt_from_conf(conf);
 
-    seat_set_trust_status(&wgf->seat, true);
-    char *error = backend_init(vt, &wgf->seat, &wgf->backend, wgf->logctx, conf,
+    seat_set_trust_status(&wgs->seat, true);
+    char *error = backend_init(vt, &wgs->seat, &wgs->backend, wgs->logctx, conf,
                          conf_get_str(conf, CONF_host),
                          conf_get_int(conf, CONF_port),
                          &realhost,
@@ -514,14 +514,14 @@ static void start_backend(WinGuiFrontend *wgf)
         MessageBox(NULL, msg, str, MB_ICONERROR | MB_OK);
         sfree(str);
         sfree(msg);
-        if (wgf->backend) {
-            backend_free(wgf->backend);
-            wgf->backend = NULL;
+        if (wgs->backend) {
+            backend_free(wgs->backend);
+            wgs->backend = NULL;
         }
         if (realhost) {
             sfree(realhost);
         }
-        add_error_message_to_term(wgf, error);
+        add_error_message_to_term(wgs, error);
         sfree(error);
         return;
     }
@@ -531,70 +531,70 @@ static void start_backend(WinGuiFrontend *wgf)
     /*
      * Connect the terminal to the backend for resize purposes.
      */
-    term_provide_backend(term, wgf->backend);
+    term_provide_backend(term, wgs->backend);
 
     /*
      * Set up a line discipline.
      */
-    wgf->ldisc = ldisc_create(conf, term, wgf->backend, &wgf->seat);
+    wgs->ldisc = ldisc_create(conf, term, wgs->backend, &wgs->seat);
 
-    wgf->remote_closed = false;
+    wgs->remote_closed = false;
 }
 
-static void stop_backend(WinGuiFrontend *wgf)
+static void stop_backend(WinGuiSession *wgs)
 {
-    Terminal *term = wgf->term;
+    Terminal *term = wgs->term;
     char *newtitle;
 
     newtitle = dupprintf("%s (inactive)", appname);
-    win_set_icon_title(&wgf->wintw, newtitle, DEFAULT_CODEPAGE);
-    win_set_title(&wgf->wintw, newtitle, DEFAULT_CODEPAGE);
+    win_set_icon_title(&wgs->wintw, newtitle, DEFAULT_CODEPAGE);
+    win_set_title(&wgs->wintw, newtitle, DEFAULT_CODEPAGE);
     sfree(newtitle);
 
-    if (wgf->ldisc) {
-        ldisc_free(wgf->ldisc);
-        wgf->ldisc = NULL;
+    if (wgs->ldisc) {
+        ldisc_free(wgs->ldisc);
+        wgs->ldisc = NULL;
     }
-    if (wgf->backend) {
-        backend_free(wgf->backend);
-        wgf->backend = NULL;
+    if (wgs->backend) {
+        backend_free(wgs->backend);
+        wgs->backend = NULL;
         term_provide_backend(term, NULL);
-        seat_update_specials_menu(&wgf->seat);
+        seat_update_specials_menu(&wgs->seat);
     }
 }
 
 static void frontend_set_tab_index(void *p, int index) {
-    WinGuiFrontend *wgf = (WinGuiFrontend *)p;
-    wgf->tab_index = index;
+    WinGuiSession *wgs = (WinGuiSession *)p;
+    wgs->tab_index = index;
 }
 
-static bool is_session_deletable(WinGuiFrontend *wgf) {
-    int close_on_exit = conf_get_int(wgf->conf, CONF_close_on_exit);
+static bool is_session_deletable(WinGuiSession *wgs) {
+    int close_on_exit = conf_get_int(wgs->conf, CONF_close_on_exit);
     return (close_on_exit == FORCE_ON ||
-            (close_on_exit == AUTO && wgf->remote_exitcode != INT_MAX) ||
-            wgf->delete_session);
+            (close_on_exit == AUTO && wgs->remote_exitcode != INT_MAX) ||
+            wgs->delete_session);
 }
 
 static void remote_close_callback(void *context) {
-    WinGuiFrontend *wgf = (WinGuiFrontend *)context;
-    assert(wgf->remote_closed);
+    WinGuiSession *wgs = (WinGuiSession *)context;
+    assert(wgs->remote_closed);
 
-    stop_backend(wgf);
-    if (is_session_deletable(wgf)) {
-        delete_session(wgf);
+    stop_backend(wgs);
+    if (is_session_deletable(wgs)) {
+        delete_session(wgs);
     }
 }
 
-static void remote_close(WinGuiFrontend *wgf, int exitcode, const char *msg) {
-    queue_toplevel_callback(remote_close_callback, wgf);
-    wgf->remote_closed = true;
-    wgf->remote_exitcode = exitcode;
+static void remote_close(WinGuiSession *wgs, int exitcode, const char *msg) {
+    queue_toplevel_callback(remote_close_callback, wgs);
+    wgs->remote_closed = true;
+    wgs->remote_exitcode = exitcode;
 
-    if (is_session_deletable(wgf)) {
+    if (is_session_deletable(wgs)) {
         return;
     }
-    tab_bar_set_tab_unusable(wgf->tab_index, true);
-    add_error_message_to_term(wgf, msg);
+    tab_bar_set_tab_unusable(wgs->tab_index, true);
+    add_error_message_to_term(wgs, msg);
 }
 
 static HFONT get_dpi_aware_tab_bar_font() {
@@ -764,9 +764,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         pointer_array_reset(frontend_set_tab_index);
     }
 
-    wgf_active = create_frontend(conf, cmdline_session_name);
-    WinGuiFrontend *wgf = wgf_active;
-    pointer_array_insert(0, wgf);
+    wgs_active = create_frontend(conf, cmdline_session_name);
+    WinGuiSession *wgs = wgs_active;
+    pointer_array_insert(0, wgs);
 
     /*
      * Correct the guesses for extra_{width,height}.
@@ -775,9 +775,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         RECT cr, wr;
         GetWindowRect(frame_hwnd, &wr);
         GetClientRect(frame_hwnd, &cr);
-        wgf->offset_width = wgf->offset_height = conf_get_int(conf, CONF_window_border);
-        extra_width = wr.right - wr.left - cr.right + cr.left + wgf->offset_width*2;
-        extra_height = wr.bottom - wr.top - cr.bottom + cr.top +wgf->offset_height*2;
+        wgs->offset_width = wgs->offset_height = conf_get_int(conf, CONF_window_border);
+        extra_width = wr.right - wr.left - cr.right + cr.left + wgs->offset_width*2;
+        extra_height = wr.bottom - wr.top - cr.bottom + cr.top +wgs->offset_height*2;
         adjust_extra_size();
         finddlg_pin_to_frame(tab_bar_get_extra_height());
     }
@@ -786,15 +786,15 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
      * Resize the window, now we know what size we _really_ want it
      * to be.
      */
-    guess_width = extra_width + wgf->font_width * wgf->term->cols;
-    guess_height = extra_height + wgf->font_height * wgf->term->rows;
+    guess_width = extra_width + wgs->font_width * wgs->term->cols;
+    guess_height = extra_height + wgs->font_height * wgs->term->rows;
     SetWindowPos(frame_hwnd, NULL, 0, 0, guess_width, guess_height,
                  SWP_NOMOVE | SWP_NOREDRAW | SWP_NOZORDER);
 
     /*
      * Initialise the scroll bar.
      */
-    set_scrollbar(wgf->term->rows, 0, wgf->term->rows, false);
+    set_scrollbar(wgs->term->rows, 0, wgs->term->rows, false);
 
     /*
      * Prepare the mouse handler.
@@ -854,11 +854,11 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
     }
 
     if (restricted_acl()) {
-        lp_eventlog(&wgf->logpolicy, "Running with restricted process ACL");
+        lp_eventlog(&wgs->logpolicy, "Running with restricted process ACL");
     }
 
     winselgui_set_hwnd(frame_hwnd);
-    start_backend(wgf);
+    start_backend(wgs);
 
     /*
      * Set up the initial input locale.
@@ -871,10 +871,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
     ShowWindow(frame_hwnd, show);
     SetForegroundWindow(frame_hwnd);
 
-    term_set_focus(wgf->term, GetForegroundWindow() == frame_hwnd);
+    term_set_focus(wgs->term, GetForegroundWindow() == frame_hwnd);
     UpdateWindow(term_hwnd);
 
-    gui_terminal_ready(term_hwnd, &wgf->seat, wgf->backend);
+    gui_terminal_ready(term_hwnd, &wgs->seat, wgs->backend);
 
     while (1) {
         int n;
@@ -903,7 +903,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         } else {
             timeout = INFINITE;
             /* The messages seem unreliable; especially if we're being tricky */
-            term_set_focus(wgf_active->term, GetForegroundWindow() == frame_hwnd);
+            term_set_focus(wgs_active->term, GetForegroundWindow() == frame_hwnd);
         }
 
         HandleWaitList *hwl = get_handle_wait_list();
@@ -1100,22 +1100,22 @@ static void update_savedsess_menu(void)
 
 static bool win_seat_is_utf8(Seat *seat)
 {
-    WinGuiFrontend *wgf = container_of(seat, WinGuiFrontend, seat);
-    return wgf->ucsdata.line_codepage == CP_UTF8;
+    WinGuiSession *wgs = container_of(seat, WinGuiSession, seat);
+    return wgs->ucsdata.line_codepage == CP_UTF8;
 }
 
 static char *win_seat_get_ttymode(Seat *seat, const char *mode)
 {
-    WinGuiFrontend *wgf = container_of(seat, WinGuiFrontend, seat);
-    Terminal *term = wgf->term;
+    WinGuiSession *wgs = container_of(seat, WinGuiSession, seat);
+    Terminal *term = wgs->term;
     return term_get_ttymode(term, mode);
 }
 
 static StripCtrlChars *win_seat_stripctrl_new(
     Seat *seat, BinarySink *bs_out, SeatInteractionContext sic)
 {
-    WinGuiFrontend *wgf = container_of(seat, WinGuiFrontend, seat);
-    Terminal *term = wgf->term;
+    WinGuiSession *wgs = container_of(seat, WinGuiSession, seat);
+    Terminal *term = wgs->term;
     return stripctrl_new_term(bs_out, false, 0, term);
 }
 
@@ -1124,19 +1124,19 @@ static StripCtrlChars *win_seat_stripctrl_new(
  */
 static void win_seat_update_specials_menu(Seat *seat)
 {
-    WinGuiFrontend *wgf = container_of(seat, WinGuiFrontend, seat);
+    WinGuiSession *wgs = container_of(seat, WinGuiSession, seat);
     HMENU new_menu;
 
-    if (wgf->specials_menu) {
-        DestroyMenu(wgf->specials_menu);
+    if (wgs->specials_menu) {
+        DestroyMenu(wgs->specials_menu);
     }
 
-    if (wgf->backend)
-        wgf->specials = backend_get_specials(wgf->backend);
+    if (wgs->backend)
+        wgs->specials = backend_get_specials(wgs->backend);
     else
-        wgf->specials = NULL;
+        wgs->specials = NULL;
 
-    if (wgf->specials) {
+    if (wgs->specials) {
         /* We can't use Windows to provide a stack for submenus, so
          * here's a lame "stack" that will do for now. */
         HMENU saved_menu = NULL;
@@ -1145,7 +1145,7 @@ static void win_seat_update_specials_menu(Seat *seat)
         int i;
         for (i = 0; nesting > 0; i++) {
             assert(IDM_SPECIAL_MIN + 0x10 * i < IDM_SPECIAL_MAX);
-            switch (wgf->specials[i].code) {
+            switch (wgs->specials[i].code) {
               case SS_SEP:
                 AppendMenu(new_menu, MF_SEPARATOR, 0, 0);
                 break;
@@ -1155,7 +1155,7 @@ static void win_seat_update_specials_menu(Seat *seat)
                 saved_menu = new_menu; /* XXX lame stacking */
                 new_menu = CreatePopupMenu();
                 AppendMenu(saved_menu, MF_POPUP | MF_ENABLED,
-                           (UINT_PTR) new_menu, wgf->specials[i].name);
+                           (UINT_PTR) new_menu, wgs->specials[i].name);
                 break;
               case SS_EXITMENU:
                 nesting--;
@@ -1166,38 +1166,38 @@ static void win_seat_update_specials_menu(Seat *seat)
                 break;
               default:
                 AppendMenu(new_menu, MF_ENABLED, IDM_SPECIAL_MIN + 0x10 * i,
-                           wgf->specials[i].name);
+                           wgs->specials[i].name);
                 break;
             }
         }
         /* Squirrel the highest special. */
-        wgf->n_specials = i - 1;
+        wgs->n_specials = i - 1;
     } else {
         new_menu = NULL;
-        wgf->n_specials = 0;
+        wgs->n_specials = 0;
     }
-    wgf->specials_menu = new_menu;
+    wgs->specials_menu = new_menu;
 }
 
-static void update_mouse_pointer(WinGuiFrontend *wgf)
+static void update_mouse_pointer(WinGuiSession *wgs)
 {
     static LPTSTR cursor_type = IDC_ARROW;
     LPTSTR curstype = NULL;
-    wgf->cursor_forced_visible = false;
-    switch (wgf->busy_status) {
+    wgs->cursor_forced_visible = false;
+    switch (wgs->busy_status) {
       case BUSY_NOT:
-        if (wgf->pointer_indicates_raw_mouse)
+        if (wgs->pointer_indicates_raw_mouse)
             curstype = IDC_ARROW;
         else
             curstype = IDC_IBEAM;
         break;
       case BUSY_WAITING:
         curstype = IDC_APPSTARTING; /* this may be an abuse */
-        wgf->cursor_forced_visible = true;
+        wgs->cursor_forced_visible = true;
         break;
       case BUSY_CPU:
         curstype = IDC_WAIT;
-        wgf->cursor_forced_visible = true;
+        wgs->cursor_forced_visible = true;
         break;
       default:
         unreachable("Bad busy_status");
@@ -1208,29 +1208,29 @@ static void update_mouse_pointer(WinGuiFrontend *wgf)
         SetCursor(cursor); /* force redraw of cursor at current posn */
         cursor_type = curstype;
     }
-    show_mouseptr(wgf, wgf->cursor_visible);
+    show_mouseptr(wgs, wgs->cursor_visible);
 }
 
 static void win_seat_set_busy_status(Seat *seat, BusyStatus status)
 {
-    WinGuiFrontend *wgf = container_of(seat, WinGuiFrontend, seat);
-    wgf->busy_status = status;
-    if (wgf != wgf_active) {return;}
-    update_mouse_pointer(wgf);
+    WinGuiSession *wgs = container_of(seat, WinGuiSession, seat);
+    wgs->busy_status = status;
+    if (wgs != wgs_active) {return;}
+    update_mouse_pointer(wgs);
 }
 
 static void wintw_set_raw_mouse_mode(TermWin *tw, bool activate)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
-    wgf->send_raw_mouse = activate;
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
+    wgs->send_raw_mouse = activate;
 }
 
 static void wintw_set_raw_mouse_mode_pointer(TermWin *tw, bool activate)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
-    wgf->pointer_indicates_raw_mouse = activate;
-    if (wgf != wgf_active) {return;}
-    update_mouse_pointer(wgf);
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
+    wgs->pointer_indicates_raw_mouse = activate;
+    if (wgs != wgs_active) {return;}
+    update_mouse_pointer(wgs);
 }
 
 /*
@@ -1238,16 +1238,16 @@ static void wintw_set_raw_mouse_mode_pointer(TermWin *tw, bool activate)
  */
 static void win_seat_connection_fatal(Seat *seat, const char *msg)
 {
-    WinGuiFrontend *wgf = container_of(seat, WinGuiFrontend, seat);
+    WinGuiSession *wgs = container_of(seat, WinGuiSession, seat);
 
-    if (wgf == wgf_active) {
-        int close_on_exit = conf_get_int(wgf->conf, CONF_close_on_exit);
+    if (wgs == wgs_active) {
+        int close_on_exit = conf_get_int(wgs->conf, CONF_close_on_exit);
         char *title = dupprintf("%s Fatal Error", appname);
-        show_mouseptr(wgf, true);
+        show_mouseptr(wgs, true);
         if (close_on_exit == AUTO || close_on_exit == FORCE_OFF) {
             char *question = dupprintf("%s\nDo you want to close the session tab?", msg);
             if (MessageBox(frame_hwnd, question, title, MB_ICONERROR | MB_YESNO) == IDYES) {
-                wgf->delete_session = true;
+                wgs->delete_session = true;
             }
             sfree(question);
         } else {
@@ -1255,7 +1255,7 @@ static void win_seat_connection_fatal(Seat *seat, const char *msg)
         }
         sfree(title);
     }
-    remote_close(wgf, INT_MAX, msg);
+    remote_close(wgs, INT_MAX, msg);
 }
 
 /*
@@ -1287,8 +1287,8 @@ static inline rgb rgb_from_colorref(COLORREF cr)
 
 static void wintw_palette_get_overrides(TermWin *tw, Terminal *term)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
-    Conf *conf = wgf->conf;
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
+    Conf *conf = wgs->conf;
     if (conf_get_bool(conf, CONF_system_colour)) {
         rgb rgb;
 
@@ -1404,7 +1404,7 @@ static void general_textout(HDC hdc, int x, int y, CONST RECT *lprc,
         SetBkMode(hdc, bkmode);
 }
 
-static int get_font_width(WinGuiFrontend *wgf, HDC hdc, const TEXTMETRIC *tm)
+static int get_font_width(WinGuiSession *wgs, HDC hdc, const TEXTMETRIC *tm)
 {
     int ret;
     /* Note that the TMPF_FIXED_PITCH bit is defined upside down :-( */
@@ -1416,8 +1416,8 @@ static int get_font_width(WinGuiFrontend *wgf, HDC hdc, const TEXTMETRIC *tm)
         ABCFLOAT widths[LAST-FIRST + 1];
         int j;
 
-        wgf->font_varpitch = true;
-        wgf->font_dualwidth = true;
+        wgs->font_varpitch = true;
+        wgs->font_dualwidth = true;
         if (GetCharABCWidthsFloat(hdc, FIRST, LAST, widths)) {
             ret = 0;
             for (j = 0; j < lenof(widths); j++) {
@@ -1482,9 +1482,9 @@ static void init_dpi_info(void)
  *
  * - find a trust sigil icon that will look OK with the chosen font.
  */
-static void init_fonts(WinGuiFrontend *wgf, int pick_width, int pick_height)
+static void init_fonts(WinGuiSession *wgs, int pick_width, int pick_height)
 {
-    Conf *conf = wgf->conf;
+    Conf *conf = wgs->conf;
     TEXTMETRIC tm;
     OUTLINETEXTMETRIC otm;
     CPINFO cpinfo;
@@ -1496,12 +1496,12 @@ static void init_fonts(WinGuiFrontend *wgf, int pick_width, int pick_height)
     int fw_dontcare, fw_bold;
 
     for (i = 0; i < FONT_MAXNO; i++)
-        wgf->fonts[i] = NULL;
+        wgs->fonts[i] = NULL;
 
-    wgf->bold_font_mode = conf_get_int(conf, CONF_bold_style) & 1 ?
+    wgs->bold_font_mode = conf_get_int(conf, CONF_bold_style) & 1 ?
         BOLD_FONT : BOLD_NONE;
-    wgf->bold_colours = conf_get_int(conf, CONF_bold_style) & 2 ? true : false;
-    wgf->und_mode = UND_FONT;
+    wgs->bold_colours = conf_get_int(conf, CONF_bold_style) & 2 ? true : false;
+    wgs->und_mode = UND_FONT;
 
     font = conf_get_fontspec(conf, CONF_font);
     if (font->isbold) {
@@ -1515,45 +1515,45 @@ static void init_fonts(WinGuiFrontend *wgf, int pick_width, int pick_height)
     hdc = GetDC(frame_hwnd);
 
     if (pick_height)
-        wgf->font_height = pick_height;
+        wgs->font_height = pick_height;
     else {
-        wgf->font_height = font->height;
-        if (wgf->font_height > 0) {
-            wgf->font_height =
-                -MulDiv(wgf->font_height, dpi_info.y, 72);
+        wgs->font_height = font->height;
+        if (wgs->font_height > 0) {
+            wgs->font_height =
+                -MulDiv(wgs->font_height, dpi_info.y, 72);
         }
     }
-    wgf->font_width = pick_width;
+    wgs->font_width = pick_width;
 
     quality = conf_get_int(conf, CONF_font_quality);
 #define f(i,c,w,u) \
-    wgf->fonts[i] = CreateFont (wgf->font_height, wgf->font_width, 0, 0, w, false, u, false, \
+    wgs->fonts[i] = CreateFont (wgs->font_height, wgs->font_width, 0, 0, w, false, u, false, \
                            c, OUT_DEFAULT_PRECIS, \
                            CLIP_DEFAULT_PRECIS, FONT_QUALITY(quality), \
                            FIXED_PITCH | FF_DONTCARE, font->name)
 
     f(FONT_NORMAL, font->charset, fw_dontcare, false);
 
-    SelectObject(hdc, wgf->fonts[FONT_NORMAL]);
+    SelectObject(hdc, wgs->fonts[FONT_NORMAL]);
     GetTextMetrics(hdc, &tm);
     if (GetOutlineTextMetrics(hdc, sizeof(otm), &otm))
-        wgf->font_strikethrough_y = tm.tmAscent - otm.otmsStrikeoutPosition;
+        wgs->font_strikethrough_y = tm.tmAscent - otm.otmsStrikeoutPosition;
     else
-        wgf->font_strikethrough_y = tm.tmAscent - (tm.tmAscent * 3 / 8);
+        wgs->font_strikethrough_y = tm.tmAscent - (tm.tmAscent * 3 / 8);
 
-    GetObject(wgf->fonts[FONT_NORMAL], sizeof(LOGFONT), &wgf->lfont);
+    GetObject(wgs->fonts[FONT_NORMAL], sizeof(LOGFONT), &wgs->lfont);
 
     /* Note that the TMPF_FIXED_PITCH bit is defined upside down :-( */
     if (!(tm.tmPitchAndFamily & TMPF_FIXED_PITCH)) {
-        wgf->font_varpitch = false;
-        wgf->font_dualwidth = (tm.tmAveCharWidth != tm.tmMaxCharWidth);
+        wgs->font_varpitch = false;
+        wgs->font_dualwidth = (tm.tmAveCharWidth != tm.tmMaxCharWidth);
     } else {
-        wgf->font_varpitch = true;
-        wgf->font_dualwidth = true;
+        wgs->font_varpitch = true;
+        wgs->font_dualwidth = true;
     }
     if (pick_width == 0 || pick_height == 0) {
-        wgf->font_height = tm.tmHeight;
-        wgf->font_width = get_font_width(wgf, hdc, &tm);
+        wgs->font_height = tm.tmHeight;
+        wgs->font_width = get_font_width(wgs, hdc, &tm);
     }
 
 #ifdef RDB_DEBUG_PATCH
@@ -1568,15 +1568,15 @@ static void init_fonts(WinGuiFrontend *wgf, int pick_width, int pick_height)
 
         /* !!! Yes the next line is right */
         if (cset == OEM_CHARSET)
-            wgf->ucsdata.font_codepage = GetOEMCP();
+            wgs->ucsdata.font_codepage = GetOEMCP();
         else if (TranslateCharsetInfo ((DWORD *)(ULONG_PTR)cset,
                                       &info, TCI_SRCCHARSET))
-                wgf->ucsdata.font_codepage = info.ciACP;
+                wgs->ucsdata.font_codepage = info.ciACP;
         else
-            wgf->ucsdata.font_codepage = -1;
+            wgs->ucsdata.font_codepage = -1;
 
-        GetCPInfo(wgf->ucsdata.font_codepage, &cpinfo);
-        wgf->ucsdata.dbcs_screenfont = (cpinfo.MaxCharSize > 1);
+        GetCPInfo(wgs->ucsdata.font_codepage, &cpinfo);
+        wgs->ucsdata.dbcs_screenfont = (cpinfo.MaxCharSize > 1);
     }
 
     f(FONT_UNDERLINE, font->charset, fw_dontcare, true);
@@ -1606,17 +1606,17 @@ static void init_fonts(WinGuiFrontend *wgf, int pick_width, int pick_height)
         COLORREF c;
 
         und_dc = CreateCompatibleDC(hdc);
-        und_bm = CreateCompatibleBitmap(hdc, wgf->font_width, wgf->font_height);
+        und_bm = CreateCompatibleBitmap(hdc, wgs->font_width, wgs->font_height);
         und_oldbm = SelectObject(und_dc, und_bm);
-        SelectObject(und_dc, wgf->fonts[FONT_UNDERLINE]);
+        SelectObject(und_dc, wgs->fonts[FONT_UNDERLINE]);
         SetTextAlign(und_dc, TA_TOP | TA_LEFT | TA_NOUPDATECP);
         SetTextColor(und_dc, RGB(255, 255, 255));
         SetBkColor(und_dc, RGB(0, 0, 0));
         SetBkMode(und_dc, OPAQUE);
         ExtTextOut(und_dc, 0, 0, ETO_OPAQUE, NULL, " ", 1, NULL);
         gotit = false;
-        for (i = 0; i < wgf->font_height; i++) {
-            c = GetPixel(und_dc, wgf->font_width / 2, i);
+        for (i = 0; i < wgs->font_height; i++) {
+            c = GetPixel(und_dc, wgs->font_width / 2, i);
             if (c != RGB(0, 0, 0))
                 gotit = true;
         }
@@ -1624,25 +1624,25 @@ static void init_fonts(WinGuiFrontend *wgf, int pick_width, int pick_height)
         DeleteObject(und_bm);
         DeleteDC(und_dc);
         if (!gotit) {
-            wgf->und_mode = UND_LINE;
-            DeleteObject(wgf->fonts[FONT_UNDERLINE]);
-            wgf->fonts[FONT_UNDERLINE] = 0;
+            wgs->und_mode = UND_LINE;
+            DeleteObject(wgs->fonts[FONT_UNDERLINE]);
+            wgs->fonts[FONT_UNDERLINE] = 0;
         }
     }
 
-    if (wgf->bold_font_mode == BOLD_FONT) {
+    if (wgs->bold_font_mode == BOLD_FONT) {
         f(FONT_BOLD, font->charset, fw_bold, false);
     }
 #undef f
 
-    wgf->descent = tm.tmAscent + 1;
-    if (wgf->descent >= wgf->font_height)
-        wgf->descent = wgf->font_height - 1;
+    wgs->descent = tm.tmAscent + 1;
+    if (wgs->descent >= wgs->font_height)
+        wgs->descent = wgs->font_height - 1;
 
     for (i = 0; i < 3; i++) {
-        if (wgf->fonts[i]) {
-            if (SelectObject(hdc, wgf->fonts[i]) && GetTextMetrics(hdc, &tm))
-                fontsize[i] = get_font_width(wgf, hdc, &tm) + 256 * tm.tmHeight;
+        if (wgs->fonts[i]) {
+            if (SelectObject(hdc, wgs->fonts[i]) && GetTextMetrics(hdc, &tm))
+                fontsize[i] = get_font_width(wgs, hdc, &tm) + 256 * tm.tmHeight;
             else
                 fontsize[i] = -i;
         } else
@@ -1651,28 +1651,28 @@ static void init_fonts(WinGuiFrontend *wgf, int pick_width, int pick_height)
 
     ReleaseDC(frame_hwnd, hdc);
 
-    if (wgf->trust_icon != INVALID_HANDLE_VALUE) {
-        DestroyIcon(wgf->trust_icon);
+    if (wgs->trust_icon != INVALID_HANDLE_VALUE) {
+        DestroyIcon(wgs->trust_icon);
     }
-    wgf->trust_icon = LoadImage(hinst, MAKEINTRESOURCE(IDI_MAINICON),
-                           IMAGE_ICON, wgf->font_width*2, wgf->font_height,
+    wgs->trust_icon = LoadImage(hinst, MAKEINTRESOURCE(IDI_MAINICON),
+                           IMAGE_ICON, wgs->font_width*2, wgs->font_height,
                            LR_DEFAULTCOLOR);
 
     if (fontsize[FONT_UNDERLINE] != fontsize[FONT_NORMAL]) {
-        wgf->und_mode = UND_LINE;
-        DeleteObject(wgf->fonts[FONT_UNDERLINE]);
-        wgf->fonts[FONT_UNDERLINE] = 0;
+        wgs->und_mode = UND_LINE;
+        DeleteObject(wgs->fonts[FONT_UNDERLINE]);
+        wgs->fonts[FONT_UNDERLINE] = 0;
     }
 
-    if (wgf->bold_font_mode == BOLD_FONT &&
+    if (wgs->bold_font_mode == BOLD_FONT &&
         fontsize[FONT_BOLD] != fontsize[FONT_NORMAL]) {
-        wgf->bold_font_mode = BOLD_SHADOW;
-        DeleteObject(wgf->fonts[FONT_BOLD]);
-        wgf->fonts[FONT_BOLD] = 0;
+        wgs->bold_font_mode = BOLD_SHADOW;
+        DeleteObject(wgs->fonts[FONT_BOLD]);
+        wgs->fonts[FONT_BOLD] = 0;
     }
-    wgf->fontflag[0] = true;
-    wgf->fontflag[1] = true;
-    wgf->fontflag[2] = true;
+    wgs->fontflag[0] = true;
+    wgs->fontflag[1] = true;
+    wgs->fontflag[2] = true;
 
     const char *line_codepage_backup = NULL;
     if (backend_vt_from_conf(conf)->protocol == PROT_SFTP) {
@@ -1682,18 +1682,18 @@ static void init_fonts(WinGuiFrontend *wgf, int pick_width, int pick_height)
             conf_set_str(conf, CONF_line_codepage, "UTF-8");
         }
     }
-    init_ucs(conf, &wgf->ucsdata);
+    init_ucs(conf, &wgs->ucsdata);
     if (line_codepage_backup) {
         conf_set_str(conf, CONF_line_codepage, line_codepage_backup);
         sfree((void *)line_codepage_backup);
     }
 
-    wgf->font_dpi = dpi_info.y;
+    wgs->font_dpi = dpi_info.y;
 }
 
-static void another_font(WinGuiFrontend *wgf, int fontno)
+static void another_font(WinGuiSession *wgs, int fontno)
 {
-    Conf *conf = wgf->conf;
+    Conf *conf = wgs->conf;
     int basefont;
     int fw_dontcare, fw_bold, quality;
     int c, w, x;
@@ -1701,12 +1701,12 @@ static void another_font(WinGuiFrontend *wgf, int fontno)
     char *s;
     FontSpec *font;
 
-    if (fontno < 0 || fontno >= FONT_MAXNO || wgf->fontflag[fontno])
+    if (fontno < 0 || fontno >= FONT_MAXNO || wgs->fontflag[fontno])
         return;
 
     basefont = (fontno & ~(FONT_BOLDUND));
-    if (basefont != fontno && !wgf->fontflag[basefont])
-        another_font(wgf, basefont);
+    if (basefont != fontno && !wgs->fontflag[basefont])
+        another_font(wgs, basefont);
 
     font = conf_get_fontspec(conf, CONF_font);
 
@@ -1722,7 +1722,7 @@ static void another_font(WinGuiFrontend *wgf, int fontno)
     w = fw_dontcare;
     u = false;
     s = font->name;
-    x = wgf->font_width;
+    x = wgs->font_width;
 
     if (fontno & FONT_WIDE)
         x *= 2;
@@ -1737,36 +1737,36 @@ static void another_font(WinGuiFrontend *wgf, int fontno)
 
     quality = conf_get_int(conf, CONF_font_quality);
 
-    wgf->fonts[fontno] =
-        CreateFont(wgf->font_height * (1 + !!(fontno & FONT_HIGH)), x, 0, 0, w,
+    wgs->fonts[fontno] =
+        CreateFont(wgs->font_height * (1 + !!(fontno & FONT_HIGH)), x, 0, 0, w,
                    false, u, false, c, OUT_DEFAULT_PRECIS,
                    CLIP_DEFAULT_PRECIS, FONT_QUALITY(quality),
                    DEFAULT_PITCH | FF_DONTCARE, s);
 
-    wgf->fontflag[fontno] = true;
+    wgs->fontflag[fontno] = true;
 }
 
-static void deinit_fonts(WinGuiFrontend *wgf)
+static void deinit_fonts(WinGuiSession *wgs)
 {
     int i;
     for (i = 0; i < FONT_MAXNO; i++) {
-        if (wgf->fonts[i])
-            DeleteObject(wgf->fonts[i]);
-        wgf->fonts[i] = 0;
-        wgf->fontflag[i] = false;
+        if (wgs->fonts[i])
+            DeleteObject(wgs->fonts[i]);
+        wgs->fonts[i] = 0;
+        wgs->fontflag[i] = false;
     }
 
-    if (wgf->trust_icon != INVALID_HANDLE_VALUE) {
-        DestroyIcon(wgf->trust_icon);
+    if (wgs->trust_icon != INVALID_HANDLE_VALUE) {
+        DestroyIcon(wgs->trust_icon);
     }
-    wgf->trust_icon = INVALID_HANDLE_VALUE;
+    wgs->trust_icon = INVALID_HANDLE_VALUE;
 }
 
 static void wintw_request_resize(TermWin *tw, int w, int h)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
-    Conf *conf = wgf->conf;
-    Terminal *term = wgf->term;
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
+    Conf *conf = wgs->conf;
+    Terminal *term = wgs->term;
     const struct BackendVtable *vt;
     int width, height;
     int resize_action = conf_get_int(conf, CONF_resize_action);
@@ -1811,12 +1811,12 @@ static void wintw_request_resize(TermWin *tw, int w, int h)
     }
 
      if (resize_action != RESIZE_FONT && !IsZoomed(frame_hwnd)) {
-        if (wgf != wgf_active) {
+        if (wgs != wgs_active) {
             term_resize_request_completed(term);
             return;
         }
-        width = extra_width + wgf->font_width * w;
-        height = extra_height + wgf->font_height * h;
+        width = extra_width + wgs->font_width * w;
+        height = extra_height + wgs->font_height * h;
 
         SetWindowPos(frame_hwnd, NULL, 0, 0, width, height,
             SWP_NOACTIVATE | SWP_NOCOPYBITS |
@@ -1828,21 +1828,21 @@ static void wintw_request_resize(TermWin *tw, int w, int h)
          * will know what to do.
          */
         term_size(term, h, w, conf_get_int(conf, CONF_savelines));
-        if (wgf != wgf_active) {
+        if (wgs != wgs_active) {
             term_resize_request_completed(term);
             return;
         }
-        reset_window(wgf, 0);
+        reset_window(wgs, 0);
     }
 
     term_resize_request_completed(term);
-    refresh_find_match_mask(wgf);
+    refresh_find_match_mask(wgs);
     InvalidateRect(term_hwnd, NULL, true);
 }
 
-static void recompute_window_offset(WinGuiFrontend *wgf)
+static void recompute_window_offset(WinGuiSession *wgs)
 {
-    Terminal *term = wgf->term;
+    Terminal *term = wgs->term;
     RECT cr;
     GetClientRect(frame_hwnd, &cr);
 
@@ -1850,18 +1850,18 @@ static void recompute_window_offset(WinGuiFrontend *wgf)
     int win_height = cr.bottom - cr.top;
     adjust_client_size(&win_width, &win_height);
 
-    int new_offset_width = (win_width-wgf->font_width*term->cols)/2;
-    int new_offset_height = (win_height-wgf->font_height*term->rows)/2;
+    int new_offset_width = (win_width-wgs->font_width*term->cols)/2;
+    int new_offset_height = (win_height-wgs->font_height*term->rows)/2;
 
-    if (wgf->offset_width != new_offset_width ||
-        wgf->offset_height != new_offset_height) {
-        wgf->offset_width = new_offset_width;
-        wgf->offset_height = new_offset_height;
+    if (wgs->offset_width != new_offset_width ||
+        wgs->offset_height != new_offset_height) {
+        wgs->offset_width = new_offset_width;
+        wgs->offset_height = new_offset_height;
         InvalidateRect(term_hwnd, NULL, true);
     }
 }
 
-static void reset_window(WinGuiFrontend *wgf, int reinit) {
+static void reset_window(WinGuiSession *wgs, int reinit) {
     /*
      * This function decides how to resize or redraw when the
      * user changes something.
@@ -1869,8 +1869,8 @@ static void reset_window(WinGuiFrontend *wgf, int reinit) {
      * This function doesn't like to change the terminal size but if the
      * font size is locked that may be it's only soluion.
      */
-    Conf *conf = wgf->conf;
-    Terminal *term = wgf->term;
+    Conf *conf = wgs->conf;
+    Terminal *term = wgs->term;
     int win_width, win_height, resize_action, window_border;
     RECT cr, wr;
 
@@ -1897,8 +1897,8 @@ static void reset_window(WinGuiFrontend *wgf, int reinit) {
 #ifdef RDB_DEBUG_PATCH
         debug("reset_window() -- Forced deinit\n");
 #endif
-        deinit_fonts(wgf);
-        init_fonts(wgf, 0,0);
+        deinit_fonts(wgs);
+        init_fonts(wgs, 0,0);
     }
 
     /* Oh, looks like we're minimised */
@@ -1907,7 +1907,7 @@ static void reset_window(WinGuiFrontend *wgf, int reinit) {
 
     /* Is the window out of position ? */
     if (!reinit) {
-        recompute_window_offset(wgf);
+        recompute_window_offset(wgs);
 #ifdef RDB_DEBUG_PATCH
         debug("reset_window() -> Reposition terminal\n");
 #endif
@@ -1923,30 +1923,30 @@ static void reset_window(WinGuiFrontend *wgf, int reinit) {
         adjust_extra_size();
 
         if (resize_action != RESIZE_TERM) {
-            if (wgf->font_width != win_width/term->cols ||
-                wgf->font_height != win_height/term->rows) {
-                deinit_fonts(wgf);
-                init_fonts(wgf, win_width/term->cols, win_height/term->rows);
-                wgf->offset_width = (win_width-wgf->font_width*term->cols)/2;
-                wgf->offset_height = (win_height-wgf->font_height*term->rows)/2;
+            if (wgs->font_width != win_width/term->cols ||
+                wgs->font_height != win_height/term->rows) {
+                deinit_fonts(wgs);
+                init_fonts(wgs, win_width/term->cols, win_height/term->rows);
+                wgs->offset_width = (win_width-wgs->font_width*term->cols)/2;
+                wgs->offset_height = (win_height-wgs->font_height*term->rows)/2;
                 InvalidateRect(term_hwnd, NULL, true);
 #ifdef RDB_DEBUG_PATCH
                 debug("reset_window() -> Z font resize to (%d, %d)\n",
-                      wgf->font_width, wgf->font_height);
+                      wgs->font_width, wgs->font_height);
 #endif
             }
         } else {
-            if (wgf->font_width * term->cols != win_width ||
-                wgf->font_height * term->rows != win_height) {
+            if (wgs->font_width * term->cols != win_width ||
+                wgs->font_height * term->rows != win_height) {
                 /* Our only choice at this point is to change the
                  * size of the terminal; Oh well.
                  */
-                term_size(term, win_height/wgf->font_height, win_width/wgf->font_width,
+                term_size(term, win_height/wgs->font_height, win_width/wgs->font_width,
                           conf_get_int(conf, CONF_savelines));
-                wgf->offset_width = (win_width-wgf->font_width*term->cols)/2;
-                wgf->offset_height = (win_height-wgf->font_height*term->rows)/2;
+                wgs->offset_width = (win_width-wgs->font_width*term->cols)/2;
+                wgs->offset_height = (win_height-wgs->font_height*term->rows)/2;
                 InvalidateRect(term_hwnd, NULL, true);
-                refresh_find_match_mask(wgf);
+                refresh_find_match_mask(wgs);
 #ifdef RDB_DEBUG_PATCH
                 debug("reset_window() -> Zoomed term_size\n");
 #endif
@@ -1959,11 +1959,11 @@ static void reset_window(WinGuiFrontend *wgf, int reinit) {
     if (reinit == 3 && p_GetSystemMetricsForDpi && p_AdjustWindowRectExForDpi) {
         RECT rect;
         rect.left = rect.top = 0;
-        rect.right = (wgf->font_width * term->cols);
+        rect.right = (wgs->font_width * term->cols);
         if (conf_get_bool(conf, CONF_scrollbar))
             rect.right += p_GetSystemMetricsForDpi(SM_CXVSCROLL,
                                                    dpi_info.x);
-        rect.bottom = (wgf->font_height * term->rows);
+        rect.bottom = (wgs->font_height * term->rows);
         rect.right += tab_bar_get_extra_width();
         rect.bottom += tab_bar_get_extra_height();
         p_AdjustWindowRectExForDpi(
@@ -1994,21 +1994,21 @@ static void reset_window(WinGuiFrontend *wgf, int reinit) {
         debug("reset_window() -> Forced re-init\n");
 #endif
 
-        wgf->offset_width = wgf->offset_height = window_border;
-        extra_width = wr.right - wr.left - cr.right + cr.left + wgf->offset_width*2;
-        extra_height = wr.bottom - wr.top - cr.bottom + cr.top +wgf->offset_height*2;
+        wgs->offset_width = wgs->offset_height = window_border;
+        extra_width = wr.right - wr.left - cr.right + cr.left + wgs->offset_width*2;
+        extra_height = wr.bottom - wr.top - cr.bottom + cr.top +wgs->offset_height*2;
         adjust_extra_size();
 
-        if (win_width != wgf->font_width*term->cols + wgf->offset_width*2 ||
-            win_height != wgf->font_height*term->rows + wgf->offset_height*2) {
+        if (win_width != wgs->font_width*term->cols + wgs->offset_width*2 ||
+            win_height != wgs->font_height*term->rows + wgs->offset_height*2) {
 
             /* If this is too large windows will resize it to the maximum
              * allowed window size, we will then be back in here and resize
              * the font or terminal to fit.
              */
             SetWindowPos(frame_hwnd, NULL, 0, 0,
-                         wgf->font_width*term->cols + extra_width,
-                         wgf->font_height*term->rows + extra_height,
+                         wgs->font_width*term->cols + extra_width,
+                         wgs->font_height*term->rows + extra_height,
                          SWP_NOMOVE | SWP_NOZORDER);
         }
 
@@ -2023,44 +2023,44 @@ static void reset_window(WinGuiFrontend *wgf, int reinit) {
     if ((resize_action == RESIZE_TERM && reinit<=0) ||
         (resize_action == RESIZE_EITHER && reinit<0) ||
             reinit>0) {
-        wgf->offset_width = wgf->offset_height = window_border;
-        extra_width = wr.right - wr.left - cr.right + cr.left + wgf->offset_width*2;
-        extra_height = wr.bottom - wr.top - cr.bottom + cr.top +wgf->offset_height*2;
+        wgs->offset_width = wgs->offset_height = window_border;
+        extra_width = wr.right - wr.left - cr.right + cr.left + wgs->offset_width*2;
+        extra_height = wr.bottom - wr.top - cr.bottom + cr.top +wgs->offset_height*2;
         adjust_extra_size();
 
-        if (win_width != wgf->font_width*term->cols + wgf->offset_width*2 ||
-            win_height != wgf->font_height*term->rows + wgf->offset_height*2) {
+        if (win_width != wgs->font_width*term->cols + wgs->offset_width*2 ||
+            win_height != wgs->font_height*term->rows + wgs->offset_height*2) {
 
             static RECT ss;
             int width, height;
 
                 get_fullscreen_rect(&ss);
 
-            width = (ss.right - ss.left - extra_width) / wgf->font_width;
-            height = (ss.bottom - ss.top - extra_height) / wgf->font_height;
+            width = (ss.right - ss.left - extra_width) / wgs->font_width;
+            height = (ss.bottom - ss.top - extra_height) / wgs->font_height;
 
             /* Grrr too big */
             if ( term->rows > height || term->cols > width ) {
                 if (resize_action == RESIZE_EITHER) {
                     /* Make the font the biggest we can */
                     if (term->cols > width)
-                        wgf->font_width = (ss.right - ss.left - extra_width)
+                        wgs->font_width = (ss.right - ss.left - extra_width)
                             / term->cols;
                     if (term->rows > height)
-                        wgf->font_height = (ss.bottom - ss.top - extra_height)
+                        wgs->font_height = (ss.bottom - ss.top - extra_height)
                             / term->rows;
 
-                    deinit_fonts(wgf);
-                    init_fonts(wgf, wgf->font_width, wgf->font_height);
+                    deinit_fonts(wgs);
+                    init_fonts(wgs, wgs->font_width, wgs->font_height);
 
-                    width = (ss.right - ss.left - extra_width) / wgf->font_width;
-                    height = (ss.bottom - ss.top - extra_height) / wgf->font_height;
+                    width = (ss.right - ss.left - extra_width) / wgs->font_width;
+                    height = (ss.bottom - ss.top - extra_height) / wgs->font_height;
                 } else {
                     if ( height > term->rows ) height = term->rows;
                     if ( width > term->cols )  width = term->cols;
                     term_size(term, height, width,
                               conf_get_int(conf, CONF_savelines));
-                    refresh_find_match_mask(wgf);
+                    refresh_find_match_mask(wgs);
 #ifdef RDB_DEBUG_PATCH
                     debug("reset_window() -> term resize to (%d,%d)\n",
                           height, width);
@@ -2069,15 +2069,15 @@ static void reset_window(WinGuiFrontend *wgf, int reinit) {
             }
 
             SetWindowPos(frame_hwnd, NULL, 0, 0,
-                         wgf->font_width*term->cols + extra_width,
-                         wgf->font_height*term->rows + extra_height,
+                         wgs->font_width*term->cols + extra_width,
+                         wgs->font_height*term->rows + extra_height,
                          SWP_NOMOVE | SWP_NOZORDER);
 
             InvalidateRect(term_hwnd, NULL, true);
 #ifdef RDB_DEBUG_PATCH
             debug("reset_window() -> window resize to (%d,%d)\n",
-                  wgf->font_width*term->cols + extra_width,
-                  wgf->font_height*term->rows + extra_height);
+                  wgs->font_width*term->cols + extra_width,
+                  wgs->font_height*term->rows + extra_height);
 #endif
         }
         return;
@@ -2085,23 +2085,23 @@ static void reset_window(WinGuiFrontend *wgf, int reinit) {
 
     /* We're allowed to or must change the font but do we want to ?  */
 
-    if (wgf->font_width != (win_width-window_border*2)/term->cols ||
-        wgf->font_height != (win_height-window_border*2)/term->rows) {
+    if (wgs->font_width != (win_width-window_border*2)/term->cols ||
+        wgs->font_height != (win_height-window_border*2)/term->rows) {
 
-        deinit_fonts(wgf);
-        init_fonts(wgf, (win_width-window_border*2)/term->cols,
+        deinit_fonts(wgs);
+        init_fonts(wgs, (win_width-window_border*2)/term->cols,
                    (win_height-window_border*2)/term->rows);
-        wgf->offset_width = (win_width-wgf->font_width*term->cols)/2;
-        wgf->offset_height = (win_height-wgf->font_height*term->rows)/2;
+        wgs->offset_width = (win_width-wgs->font_width*term->cols)/2;
+        wgs->offset_height = (win_height-wgs->font_height*term->rows)/2;
 
-        extra_width = wr.right - wr.left - cr.right + cr.left +wgf->offset_width*2;
-        extra_height = wr.bottom - wr.top - cr.bottom + cr.top+wgf->offset_height*2;
+        extra_width = wr.right - wr.left - cr.right + cr.left +wgs->offset_width*2;
+        extra_height = wr.bottom - wr.top - cr.bottom + cr.top+wgs->offset_height*2;
         adjust_extra_size();
 
         InvalidateRect(term_hwnd, NULL, true);
 #ifdef RDB_DEBUG_PATCH
         debug("reset_window() -> font resize to (%d,%d)\n",
-              wgf->font_width, wgf->font_height);
+              wgs->font_width, wgs->font_height);
 #endif
     }
 }
@@ -2116,14 +2116,14 @@ static void set_input_locale(HKL kl)
     kbd_codepage = atoi(lbuf);
 }
 
-static void click(WinGuiFrontend *wgf, Mouse_Button b, int x, int y,
+static void click(WinGuiSession *wgs, Mouse_Button b, int x, int y,
                   bool shift, bool ctrl, bool alt)
 {
-    Conf *conf = wgf->conf;
-    Terminal *term = wgf->term;
+    Conf *conf = wgs->conf;
+    Terminal *term = wgs->term;
     int thistime = GetMessageTime();
 
-    if (wgf->send_raw_mouse &&
+    if (wgs->send_raw_mouse &&
         !(shift && conf_get_bool(conf, CONF_mouse_override))) {
         lastbtn = MBT_NOTHING;
         term_mouse(term, b, translate_button(conf, b), MA_CLICK,
@@ -2162,13 +2162,13 @@ static Mouse_Button translate_button(Conf *conf, Mouse_Button button)
     return 0;                          /* shouldn't happen */
 }
 
-static void show_mouseptr(WinGuiFrontend *wgf, bool show)
+static void show_mouseptr(WinGuiSession *wgs, bool show)
 {
     static bool cursor_visible = true;
-    if (!conf_get_bool(wgf->conf, CONF_hide_mouseptr))
+    if (!conf_get_bool(wgs->conf, CONF_hide_mouseptr))
         show = true;                   /* override if this feature disabled */
-    wgf->cursor_visible = show;
-    if (wgf->cursor_forced_visible)
+    wgs->cursor_visible = show;
+    if (wgs->cursor_forced_visible)
         show = true;
     if (cursor_visible && !show)
         ShowCursor(false);
@@ -2194,12 +2194,12 @@ static bool resizing;
 
 static void exit_callback(void *vctx)
 {
-    WinGuiFrontend *wgf = container_of(vctx, WinGuiFrontend, seat);
-    Conf *conf = wgf->conf;
+    WinGuiSession *wgs = container_of(vctx, WinGuiSession, seat);
+    Conf *conf = wgs->conf;
     int exitcode, close_on_exit;
 
-    if (!wgf->remote_closed &&
-        (exitcode = backend_exitcode(wgf->backend)) >= 0) {
+    if (!wgs->remote_closed &&
+        (exitcode = backend_exitcode(wgs->backend)) >= 0) {
         close_on_exit = conf_get_int(conf, CONF_close_on_exit);
         /* Abnormal exits will already have set session_closed and taken
          * appropriate action. */
@@ -2210,15 +2210,15 @@ static void exit_callback(void *vctx)
             /* exitcode == INT_MAX indicates that the connection was closed
              * by a fatal error, so an error box will be coming our way and
              * we should not generate this informational one. */
-            if (exitcode != INT_MAX && wgf == wgf_active) {
-                show_mouseptr(wgf, true);
+            if (exitcode != INT_MAX && wgs == wgs_active) {
+                show_mouseptr(wgs, true);
                 if (MessageBox(frame_hwnd, "Connection closed by remote host\nDo you want to close the session tab?",
                        appname, MB_YESNO | MB_ICONINFORMATION) == IDYES) {
-                    wgf->delete_session = true;
+                    wgs->delete_session = true;
                 }
             }
         }
-        remote_close(wgf, exitcode, "Connection closed by remote host");
+        remote_close(wgs, exitcode, "Connection closed by remote host");
     }
 }
 
@@ -2240,17 +2240,17 @@ void timer_change_notify(unsigned long next)
     timing_next_time = next;
 }
 
-static void conf_cache_data(WinGuiFrontend *wgf)
+static void conf_cache_data(WinGuiSession *wgs)
 {
     /* Cache some items from conf to speed lookups in very hot code */
-    Conf *conf = wgf->conf;
-    wgf->cursor_type = conf_get_int(conf, CONF_cursor_type);
-    wgf->vtmode = conf_get_int(conf, CONF_vtmode);
+    Conf *conf = wgs->conf;
+    wgs->cursor_type = conf_get_int(conf, CONF_cursor_type);
+    wgs->vtmode = conf_get_int(conf, CONF_vtmode);
 }
 
 static const int clips_system[] = { CLIP_SYSTEM };
 
-static HDC make_hdc(WinGuiFrontend *wgf)
+static HDC make_hdc(WinGuiSession *wgs)
 {
     HDC hdc;
 
@@ -2261,7 +2261,7 @@ static HDC make_hdc(WinGuiFrontend *wgf)
     if (!hdc)
         return NULL;
 
-    SelectPalette(hdc, wgf->pal, false);
+    SelectPalette(hdc, wgs->pal, false);
     return hdc;
 }
 
@@ -2272,17 +2272,17 @@ static void free_hdc(HWND hwnd, HDC hdc)
     ReleaseDC(hwnd, hdc);
 }
 
-static void wm_size_resize_term(WinGuiFrontend *wgf, LPARAM lParam, bool border)
+static void wm_size_resize_term(WinGuiSession *wgs, LPARAM lParam, bool border)
 {
-    Conf *conf = wgf->conf;
-    Terminal *term = wgf->term;
+    Conf *conf = wgs->conf;
+    Terminal *term = wgs->term;
     int width = LOWORD(lParam);
     int height = HIWORD(lParam);
     int border_size = border ? conf_get_int(conf, CONF_window_border) : 0;
     adjust_client_size(&width, &height);
 
-    int w = (width - border_size*2) / wgf->font_width;
-    int h = (height - border_size*2) / wgf->font_height;
+    int w = (width - border_size*2) / wgs->font_width;
+    int h = (height - border_size*2) / wgs->font_height;
 
     if (w < 1) w = 1;
     if (h < 1) h = 1;
@@ -2297,13 +2297,13 @@ static void wm_size_resize_term(WinGuiFrontend *wgf, LPARAM lParam, bool border)
          * resizing drag, so we don't spam the server with huge
          * numbers of resize events.
          */
-        wgf->need_backend_resize = true;
+        wgs->need_backend_resize = true;
         conf_set_int(conf, CONF_height, h);
         conf_set_int(conf, CONF_width, w);
     } else {
         if (term->cols != w || term->rows != h) {
             term_size(term, h, w, conf_get_int(conf, CONF_savelines));
-            refresh_find_match_mask(wgf);
+            refresh_find_match_mask(wgs);
         }
     }
 }
@@ -2316,12 +2316,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
     Backend *backend = NULL;
     Ldisc *ldisc = NULL;
     bool is_term_hwnd = (frame_hwnd != NULL && hwnd != frame_hwnd);
-    WinGuiFrontend *wgf = wgf_active;
-    if (wgf) {
-        conf = wgf->conf;
-        term = wgf->term;
-        backend = wgf->backend;
-        ldisc = wgf->ldisc;
+    WinGuiSession *wgs = wgs_active;
+    if (wgs) {
+        conf = wgs->conf;
+        term = wgs->term;
+        backend = wgs->backend;
+        ldisc = wgs->ldisc;
     }
     HDC hdc;
     static bool fullscr_on_max = false;
@@ -2363,7 +2363,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         if (is_term_hwnd) {
             return 0;
         }
-        show_mouseptr(wgf, true);
+        show_mouseptr(wgs, true);
         char *title = dupprintf("%s Exit Confirmation", appname);
         int ret = MessageBox(hwnd, "Are you sure you want to close All sessions?", title,
                        MB_ICONWARNING | MB_OKCANCEL | MB_DEFBUTTON1);
@@ -2373,16 +2373,16 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         }
         SetFocus(NULL);
         for (int i=0; i<pointer_array_size(); i++) {
-            WinGuiFrontend *wgf = (WinGuiFrontend *)pointer_array_get(i);
-            if (wgf->backend) {
-                stop_backend(wgf);
+            WinGuiSession *wgs = (WinGuiSession *)pointer_array_get(i);
+            if (wgs->backend) {
+                stop_backend(wgs);
             }
-            if (wgf->remote_closed) {
-                delete_callbacks_for_context(wgf);
+            if (wgs->remote_closed) {
+                delete_callbacks_for_context(wgs);
             }
-            destroy_frontend(wgf);
+            destroy_frontend(wgs);
         }
-        wgf_active = NULL;
+        wgs_active = NULL;
         DestroyWindow(hwnd);
         return 0;
       }
@@ -2460,7 +2460,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             nmhdr._hdr.hwndFrom = hwnd;
             nmhdr._hdr.code = TCN_TABDELETE;
             nmhdr._hdr.idFrom = 0;
-            nmhdr._tabOrigin = wgf->tab_index;
+            nmhdr._tabOrigin = wgs->tab_index;
             SendMessage(hwnd, WM_NOTIFY, 0, (LPARAM)(&nmhdr));
             break;
           }
@@ -2468,14 +2468,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             PostMessage(hwnd, WM_CLOSE, 0, 0);
             break;
           case IDM_SHOWLOG:
-            showeventlog(hwnd, &wgf->eventlogstuff);
+            showeventlog(hwnd, &wgs->eventlogstuff);
             break;
           case IDM_CONFIRM_PASTE:
             confirm_paste = !confirm_paste;
             check_menu_item(IDM_CONFIRM_PASTE, (confirm_paste ? MF_CHECKED : MF_UNCHECKED));
             break;
           case IDM_FIND:
-            show_finddlg(wgf_active);
+            show_finddlg(wgs_active);
             break;
           case IDM_NEWSESS: {
             Conf *conf = NULL;
@@ -2486,16 +2486,16 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             break;
           }
           case IDM_DUPSESS: {
-            Conf *conf = conf_copy(wgf->conf);
-            const char *session_name = dupstr(wgf->session_name);
-            add_session(conf, session_name, wgf->tab_index+1);
+            Conf *conf = conf_copy(wgs->conf);
+            const char *session_name = dupstr(wgs->session_name);
+            add_session(conf, session_name, wgs->tab_index+1);
             break;
           }
           case IDM_DUPSESS_SFTP: {
-            Conf *conf = conf_copy(wgf->conf);
+            Conf *conf = conf_copy(wgs->conf);
             conf_set_int(conf, CONF_protocol, PROT_SFTP);
-            const char *session_name = dupstr(wgf->session_name);
-            add_session(conf, session_name, wgf->tab_index+1);
+            const char *session_name = dupstr(wgs->session_name);
+            add_session(conf, session_name, wgs->tab_index+1);
             break;
           }
           case IDM_SAVEDSESS: {
@@ -2555,7 +2555,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
               strbuf_free(serbuf);
               inherit_handles = true;
               cl = dupprintf("putty %s&%p:%u:%s", argprefix,
-                             filemap, (unsigned)size, wgf->session_name);
+                             filemap, (unsigned)size, wgs->session_name);
 
             GetModuleFileName(NULL, b, sizeof(b) - 1);
             si.cb = sizeof(si);
@@ -2577,11 +2577,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
           }
           case IDM_RESTART:
             if (!backend) {
-                lp_eventlog(&wgf->logpolicy, "----- Session restarted -----");
+                lp_eventlog(&wgs->logpolicy, "----- Session restarted -----");
                 term_pwron(term, false);
-                start_backend(wgf);
-                if (wgf->backend) {
-                    tab_bar_set_tab_unusable(wgf->tab_index, false);
+                start_backend(wgs);
+                if (wgs->backend) {
+                    tab_bar_set_tab_unusable(wgs->tab_index, false);
                 }
             }
 
@@ -2594,7 +2594,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             term_pre_reconfig(term, conf);
             prev_conf = conf_copy(conf);
 
-            const char *session_name = dupstr(wgf->session_name);
+            const char *session_name = dupstr(wgs->session_name);
             reconfig_result = do_reconfig(frame_hwnd,
                 conf, &session_name, backend ? backend_cfg_info(backend) : 0);
             if (!reconfig_result) {
@@ -2602,17 +2602,17 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
               // do_reconfig will free session_name if cancelled.
               break;
             }
-            if (strcmp(session_name, wgf->session_name) == 0) {
+            if (strcmp(session_name, wgs->session_name) == 0) {
                 sfree((char *)session_name);
             } else {
-                char *tab_title = create_tab_title(wgf->session_id, session_name);
-                tab_bar_set_tab_title(wgf->tab_index, tab_title);
+                char *tab_title = create_tab_title(wgs->session_id, session_name);
+                tab_bar_set_tab_title(wgs->tab_index, tab_title);
                 sfree(tab_title);
-                sfree((char *) wgf->session_name);
-                wgf->session_name = session_name;
+                sfree((char *) wgs->session_name);
+                wgs->session_name = session_name;
             }
 
-            conf_cache_data(wgf);
+            conf_cache_data(wgs);
 
             resize_action = conf_get_int(conf, CONF_resize_action);
             {
@@ -2622,9 +2622,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             }
 
             /* Pass new config data to the logging module */
-            log_reconfig(wgf->logctx, conf);
+            log_reconfig(wgs->logctx, conf);
 
-            sfree(wgf->logpal);
+            sfree(wgs->logpal);
             /*
              * Flush the line discipline's edit buffer in the
              * case where local editing has just been disabled.
@@ -2644,11 +2644,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
 
             /* Reinitialise the colour palette, in case the terminal
              * just read new settings out of Conf */
-            if (wgf->pal)
-                DeleteObject(wgf->pal);
-            wgf->logpal = NULL;
-            wgf->pal = NULL;
-            init_palette(wgf);
+            if (wgs->pal)
+                DeleteObject(wgs->pal);
+            wgs->logpal = NULL;
+            wgs->pal = NULL;
+            init_palette(wgs);
 
             /* Pass new config data to the back end */
             if (backend)
@@ -2667,7 +2667,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 term_size(term, conf_get_int(conf, CONF_height),
                           conf_get_int(conf, CONF_width),
                           conf_get_int(conf, CONF_savelines));
-                refresh_find_match_mask(wgf);
+                refresh_find_match_mask(wgs);
             }
 
             /* Enable or disable the scroll bar, etc */
@@ -2701,8 +2701,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                   conf_get_int(conf, CONF_bold_style) !=
                   conf_get_int(prev_conf, CONF_bold_style)) {
                   init_lvl = 2;
-                  wgf->resize_either.font_width = 0;
-                  wgf->resize_either.font_height = 0;
+                  wgs->resize_either.font_width = 0;
+                  wgs->resize_either.font_height = 0;
               }
               if (resize_action == RESIZE_DISABLED ||
                   resize_action == RESIZE_EITHER ||
@@ -2712,7 +2712,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             }
 
             InvalidateRect(hwnd, NULL, true);
-            reset_window(wgf, init_lvl);
+            reset_window(wgs, init_lvl);
 
             conf_free(prev_conf);
             break;
@@ -2745,7 +2745,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
              * We get this if the System menu has been activated
              * using the mouse.
              */
-            show_mouseptr(wgf, true);
+            show_mouseptr(wgs, true);
             break;
           case SC_KEYMENU:
             /*
@@ -2756,7 +2756,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
              * the menu up_ rather than just sitting there in
              * `ready to appear' state.
              */
-            show_mouseptr(wgf, true);    /* make sure pointer is visible */
+            show_mouseptr(wgs, true);    /* make sure pointer is visible */
             if( lParam == 0 )
                 PostMessage(hwnd, WM_CHAR, ' ', 0);
             break;
@@ -2774,11 +2774,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                  * which would cause us to reference invalid memory
                  * and crash. Perhaps I'm just too paranoid here.
                  */
-                if (i >= wgf->n_specials)
+                if (i >= wgs->n_specials)
                     break;
                 if (backend)
                     backend_special(
-                        backend, wgf->specials[i].code, wgf->specials[i].arg);
+                        backend, wgs->specials[i].code, wgs->specials[i].arg);
             }
         }
         break;
@@ -2786,8 +2786,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
 #define X_POS(l) ((int)(short)LOWORD(l))
 #define Y_POS(l) ((int)(short)HIWORD(l))
 
-#define TO_CHR_X(x) ((((x)<0 ? (x)-wgf->font_width+1 : (x))-wgf->offset_width) / wgf->font_width)
-#define TO_CHR_Y(y) ((((y)<0 ? (y)-wgf->font_height+1: (y))-wgf->offset_height) / wgf->font_height)
+#define TO_CHR_X(x) ((((x)<0 ? (x)-wgs->font_width+1 : (x))-wgs->offset_width) / wgs->font_width)
+#define TO_CHR_Y(y) ((((y)<0 ? (y)-wgs->font_height+1: (y))-wgs->offset_height) / wgs->font_height)
       case WM_LBUTTONDOWN:
       case WM_MBUTTONDOWN:
       case WM_RBUTTONDOWN:
@@ -2805,7 +2805,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             /* Just in case this happened in mid-select */
             term_cancel_selection_drag(term);
 
-            show_mouseptr(wgf, true);    /* make sure pointer is visible */
+            show_mouseptr(wgs, true);    /* make sure pointer is visible */
             GetCursorPos(&cursorpos);
             TrackPopupMenu(popup_menus[CTXMENU].menu,
                            TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON,
@@ -2852,7 +2852,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 button = 0;
                 press = false;
             }
-            show_mouseptr(wgf, true);
+            show_mouseptr(wgs, true);
             /*
              * Special case: in full-screen mode, if the left
              * button is clicked in the very top left corner of the
@@ -2894,7 +2894,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             }
 
             if (press) {
-                click(wgf, button,
+                click(wgs, button,
                       TO_CHR_X(X_POS(lParam)), TO_CHR_Y(Y_POS(lParam)),
                       wParam & MK_SHIFT, wParam & MK_CONTROL,
                       is_alt_pressed());
@@ -2922,7 +2922,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         static LPARAM lp = 0;
         if (wParam != wp || lParam != lp ||
             last_mousemove != WM_MOUSEMOVE) {
-          show_mouseptr(wgf, true);
+          show_mouseptr(wgs, true);
           wp = wParam; lp = lParam;
           last_mousemove = WM_MOUSEMOVE;
         }
@@ -2961,7 +2961,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         }
         if (wParam != wp || lParam != lp ||
             last_mousemove != WM_NCMOUSEMOVE) {
-          show_mouseptr(wgf, true);
+          show_mouseptr(wgs, true);
           wp = wParam; lp = lParam;
           last_mousemove = WM_NCMOUSEMOVE;
         }
@@ -2972,15 +2972,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         if (!is_term_hwnd) {
           return 0;
         }
-        wgf->wnd_proc.ignore_clip = wParam;          /* don't panic on DESTROYCLIPBOARD */
+        wgs->wnd_proc.ignore_clip = wParam;          /* don't panic on DESTROYCLIPBOARD */
         break;
       case WM_DESTROYCLIPBOARD:
         if (!is_term_hwnd) {
           return 0;
         }
-        if (!wgf->wnd_proc.ignore_clip)
+        if (!wgs->wnd_proc.ignore_clip)
             term_lost_clipboard_ownership(term, CLIP_SYSTEM);
-        wgf->wnd_proc.ignore_clip = false;
+        wgs->wnd_proc.ignore_clip = false;
         return 0;
       case WM_PAINT: {
         if (!is_term_hwnd) {
@@ -2990,8 +2990,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
 
         HideCaret(hwnd);
         hdc = BeginPaint(hwnd, &p);
-        if (wgf->pal) {
-          SelectPalette(hdc, wgf->pal, true);
+        if (wgs->pal) {
+          SelectPalette(hdc, wgs->pal, true);
           RealizePalette(hdc);
         }
 
@@ -3027,29 +3027,29 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
          * current terminal appearance so that WM_PAINT becomes
          * completely trivial. However, this should do for now.
          */
-        assert(!wgf->wintw_hdc);
-        wgf->wintw_hdc = hdc;
+        assert(!wgs->wintw_hdc);
+        wgs->wintw_hdc = hdc;
         term_paint(term,
-                   (p.rcPaint.left-wgf->offset_width)/wgf->font_width,
-                   (p.rcPaint.top-wgf->offset_height)/wgf->font_height,
-                   (p.rcPaint.right-wgf->offset_width-1)/wgf->font_width,
-                   (p.rcPaint.bottom-wgf->offset_height-1)/wgf->font_height,
+                   (p.rcPaint.left-wgs->offset_width)/wgs->font_width,
+                   (p.rcPaint.top-wgs->offset_height)/wgs->font_height,
+                   (p.rcPaint.right-wgs->offset_width-1)/wgs->font_width,
+                   (p.rcPaint.bottom-wgs->offset_height-1)/wgs->font_height,
                    !term->window_update_pending);
-        wgf->wintw_hdc = NULL;
+        wgs->wintw_hdc = NULL;
 
         if (p.fErase ||
-            p.rcPaint.left  < wgf->offset_width  ||
-            p.rcPaint.top   < wgf->offset_height ||
-            p.rcPaint.right >= wgf->offset_width + wgf->font_width*term->cols ||
-            p.rcPaint.bottom>= wgf->offset_height + wgf->font_height*term->rows)
+            p.rcPaint.left  < wgs->offset_width  ||
+            p.rcPaint.top   < wgs->offset_height ||
+            p.rcPaint.right >= wgs->offset_width + wgs->font_width*term->cols ||
+            p.rcPaint.bottom>= wgs->offset_height + wgs->font_height*term->rows)
         {
           HBRUSH fillcolour, oldbrush;
           HPEN   edge, oldpen;
           fillcolour = CreateSolidBrush (
-              wgf->colours[ATTR_DEFBG>>ATTR_BGSHIFT]);
+              wgs->colours[ATTR_DEFBG>>ATTR_BGSHIFT]);
           oldbrush = SelectObject(hdc, fillcolour);
           edge = CreatePen(PS_SOLID, 0,
-                           wgf->colours[ATTR_DEFBG>>ATTR_BGSHIFT]);
+                           wgs->colours[ATTR_DEFBG>>ATTR_BGSHIFT]);
           oldpen = SelectObject(hdc, edge);
 
           /*
@@ -3064,9 +3064,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                             p.rcPaint.right, p.rcPaint.bottom);
 
           ExcludeClipRect(hdc,
-                          wgf->offset_width, wgf->offset_height,
-                          wgf->offset_width+wgf->font_width*term->cols,
-                          wgf->offset_height+wgf->font_height*term->rows);
+                          wgs->offset_width, wgs->offset_height,
+                          wgs->offset_width+wgs->font_width*term->cols,
+                          wgs->offset_height+wgs->font_height*term->rows);
 
           Rectangle(hdc, p.rcPaint.left, p.rcPaint.top,
                     p.rcPaint.right, p.rcPaint.bottom);
@@ -3096,20 +3096,20 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
           break;
         }
         term_set_focus(term, true);
-        CreateCaret(hwnd, wgf->caretbm, wgf->font_width, wgf->font_height);
+        CreateCaret(hwnd, wgs->caretbm, wgs->font_width, wgs->font_height);
         ShowCaret(hwnd);
         flash_window(0);               /* stop */
-        wgf->compose_state = 0;
+        wgs->compose_state = 0;
         term_update(term);
         break;
       case WM_KILLFOCUS:
         if (!is_term_hwnd) {
           break;
         }
-        show_mouseptr(wgf, true);
+        show_mouseptr(wgs, true);
         term_set_focus(term, false);
         DestroyCaret();
-        wgf->caret_x = wgf->caret_y = -1;        /* ensure caret is replaced next time */
+        wgs->caret_x = wgs->caret_y = -1;        /* ensure caret is replaced next time */
         term_update(term);
         break;
       case WM_ENTERSIZEMOVE:
@@ -3118,7 +3118,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         }
         EnableSizeTip(true);
         resizing = true;
-        wgf->need_backend_resize = false;
+        wgs->need_backend_resize = false;
         break;
       case WM_EXITSIZEMOVE:
         if (is_term_hwnd) {
@@ -3126,14 +3126,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         }
         EnableSizeTip(false);
         resizing = false;
-        if (wgf->need_backend_resize) {
+        if (wgs->need_backend_resize) {
             term_size(term, conf_get_int(conf, CONF_height),
                       conf_get_int(conf, CONF_width),
                       conf_get_int(conf, CONF_savelines));
-            refresh_find_match_mask(wgf);
+            refresh_find_match_mask(wgs);
             InvalidateRect(term_hwnd, NULL, true);
         }
-        recompute_window_offset(wgf);
+        recompute_window_offset(wgs);
         break;
       case WM_SIZING:
         if (is_term_hwnd) {
@@ -3150,7 +3150,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             int width, height, w, h, ew, eh;
             LPRECT r = (LPRECT) lParam;
 
-            if (!wgf->need_backend_resize && resize_action == RESIZE_EITHER &&
+            if (!wgs->need_backend_resize && resize_action == RESIZE_EITHER &&
                 (conf_get_int(conf, CONF_height) != term->rows ||
                  conf_get_int(conf, CONF_width) != term->cols)) {
                 /*
@@ -3166,20 +3166,20 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 conf_set_int(conf, CONF_width, term->cols);
 
                 InvalidateRect(term_hwnd, NULL, true);
-                wgf->need_backend_resize = true;
+                wgs->need_backend_resize = true;
             }
 
             width = r->right - r->left - extra_width;
             height = r->bottom - r->top - extra_height;
-            w = (width + wgf->font_width / 2) / wgf->font_width;
+            w = (width + wgs->font_width / 2) / wgs->font_width;
             if (w < 1)
                 w = 1;
-            h = (height + wgf->font_height / 2) / wgf->font_height;
+            h = (height + wgs->font_height / 2) / wgs->font_height;
             if (h < 1)
                 h = 1;
             UpdateSizeTip(hwnd, w, h);
-            ew = width - w * wgf->font_width;
-            eh = height - h * wgf->font_height;
+            ew = width - w * wgs->font_width;
+            eh = height - h * wgs->font_height;
             if (ew != 0) {
                 if (wParam == WMSZ_LEFT ||
                     wParam == WMSZ_BOTTOMLEFT || wParam == WMSZ_TOPLEFT)
@@ -3201,8 +3201,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         } else {
             int width, height, w, h, rv = 0;
             int window_border = conf_get_int(conf, CONF_window_border);
-            int ex_width = extra_width + (window_border - wgf->offset_width) * 2;
-            int ex_height = extra_height + (window_border - wgf->offset_height) * 2;
+            int ex_width = extra_width + (window_border - wgs->offset_width) * 2;
+            int ex_height = extra_height + (window_border - wgs->offset_height) * 2;
             LPRECT r = (LPRECT) lParam;
 
             width = r->right - r->left - ex_width;
@@ -3242,7 +3242,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
           break;
         }
         term_notify_window_pos(term, LOWORD(lParam), HIWORD(lParam));
-        sys_cursor_update(wgf);
+        sys_cursor_update(wgs);
         finddlg_pin_to_frame(tab_bar_get_extra_height());
         break;
       case WM_SIZE:
@@ -3274,9 +3274,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         if (wParam == SIZE_MINIMIZED)
             SetWindowTextW(hwnd,
                           conf_get_bool(conf, CONF_win_name_always) ?
-                          wgf->window_name : wgf->icon_name);
+                          wgs->window_name : wgs->icon_name);
         if (wParam == SIZE_RESTORED || wParam == SIZE_MAXIMIZED)
-            SetWindowTextW(hwnd, wgf->window_name);
+            SetWindowTextW(hwnd, wgs->window_name);
         if (wParam == SIZE_RESTORED) {
             processed_resize = false;
             clear_full_screen();
@@ -3309,29 +3309,29 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
 
         if (resize_action == RESIZE_DISABLED) {
             /* A resize, well it better be a minimize. */
-            reset_window(wgf, -1);
+            reset_window(wgs, -1);
         } else {
             if (wParam == SIZE_MAXIMIZED) {
                 was_zoomed = true;
-                wgf->resize_either.was_zoomed = true;
-                wgf->resize_either.font_width = wgf->font_width;
-                wgf->resize_either.font_height = wgf->font_height;
+                wgs->resize_either.was_zoomed = true;
+                wgs->resize_either.font_width = wgs->font_width;
+                wgs->resize_either.font_height = wgs->font_height;
                 if (resize_action == RESIZE_TERM)
-                    wm_size_resize_term(wgf, lParam, false);
-                reset_window(wgf, 0);
+                    wm_size_resize_term(wgs, lParam, false);
+                reset_window(wgs, 0);
                 tab_bar_adjust_window();
                 finddlg_size_to_frame(tab_bar_get_extra_height());
                 adjust_terminal_window(frame_hwnd, term_hwnd);
             } else if (wParam == SIZE_RESTORED && was_zoomed) {
                 was_zoomed = false;
-                wgf->resize_either.was_zoomed = false;
+                wgs->resize_either.was_zoomed = false;
                 if (resize_action == RESIZE_TERM) {
-                    wm_size_resize_term(wgf, lParam, true);
-                    reset_window(wgf, 1);
+                    wm_size_resize_term(wgs, lParam, true);
+                    reset_window(wgs, 1);
                 } else if (resize_action != RESIZE_FONT)
-                    reset_window(wgf, 2);
+                    reset_window(wgs, 2);
                 else
-                    reset_window(wgf, 0);
+                    reset_window(wgs, 0);
                 tab_bar_adjust_window();
                 finddlg_size_to_frame(tab_bar_get_extra_height());
                 adjust_terminal_window(frame_hwnd, term_hwnd);
@@ -3340,7 +3340,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             } else if (resize_action == RESIZE_TERM ||
                        (resize_action == RESIZE_EITHER &&
                         !is_alt_pressed())) {
-                wm_size_resize_term(wgf, lParam, true);
+                wm_size_resize_term(wgs, lParam, true);
                 /*
                  * Sometimes, we can get a spontaneous resize event
                  * outside a WM_SIZING interactive drag which wants to
@@ -3355,18 +3355,18 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                  * full redraw to clear the new border.
                  */
                 if (!resizing)
-                    recompute_window_offset(wgf);
+                    recompute_window_offset(wgs);
                 tab_bar_adjust_window();
                 finddlg_pin_to_frame(tab_bar_get_extra_height());
                 adjust_terminal_window(frame_hwnd, term_hwnd);
             } else {
-                reset_window(wgf, 0);
+                reset_window(wgs, 0);
                 tab_bar_adjust_window();
                 finddlg_pin_to_frame(tab_bar_get_extra_height());
                 adjust_terminal_window(frame_hwnd, term_hwnd);
             }
         }
-        sys_cursor_update(wgf);
+        sys_cursor_update(wgs);
         return 0;
       case WM_DPICHANGED:
         if (is_term_hwnd) {
@@ -3377,7 +3377,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         dpi_changed_new_wnd_rect = *(RECT*)(lParam);
         tab_bar_set_measurement(get_dpi_aware_tab_bar_font());
         finddlg_pin_to_frame(tab_bar_get_extra_height());
-        reset_window(wgf, 3);
+        reset_window(wgs, 3);
         return 0;
       case WM_VSCROLL: {
         if (is_term_hwnd) {
@@ -3420,7 +3420,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
           }
         }
         if (term->disptop != disptop) {
-            refresh_find_match_mask(wgf);
+            refresh_find_match_mask(wgs);
         }
 
         if (in_scrollbar_loop) {
@@ -3474,8 +3474,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
           SendMessage(term_hwnd, message, wParam, lParam);
           break;
         }
-        if ((HWND) wParam != hwnd && wgf->pal != NULL) {
-            HDC hdc = make_hdc(wgf);
+        if ((HWND) wParam != hwnd && wgs->pal != NULL) {
+            HDC hdc = make_hdc(wgs);
             if (hdc) {
                 if (RealizePalette(hdc) > 0)
                     UpdateColors(hdc);
@@ -3488,8 +3488,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
           SendMessage(term_hwnd, message, wParam, lParam);
           return false;
         }
-        if (wgf->pal != NULL) {
-            HDC hdc = make_hdc(wgf);
+        if (wgs->pal != NULL) {
+            HDC hdc = make_hdc(wgs);
             if (hdc) {
                 if (RealizePalette(hdc) > 0)
                     UpdateColors(hdc);
@@ -3534,10 +3534,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 } else break; /* pass to Windows for default processing */
             } else {
                 int disptop = term->disptop;
-                len = TranslateKey(wgf, message, wParam, lParam, buf);
+                len = TranslateKey(wgs, message, wParam, lParam, buf);
                 if (len == -1) {
                     if (term->disptop != disptop) {
-                        refresh_find_match_mask(wgf);
+                        refresh_find_match_mask(wgs);
                     }
                     return DefWindowProcW(hwnd, message, wParam, lParam);
                 }
@@ -3552,10 +3552,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                      * we're sent.
                      */
                     term_keyinput(term, -1, buf, len);
-                    show_mouseptr(wgf, false);
+                    show_mouseptr(wgs, false);
                 }
                 if (term->disptop != disptop) {
-                    refresh_find_match_mask(wgf);
+                    refresh_find_match_mask(wgs);
                 }
             }
         }
@@ -3568,14 +3568,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         /* wParam == Font number */
         /* lParam == Locale */
         set_input_locale((HKL)lParam);
-        sys_cursor_update(wgf);
+        sys_cursor_update(wgs);
         break;
       case WM_IME_STARTCOMPOSITION: {
         if (!is_term_hwnd) {
           break;
         }
         HIMC hImc = ImmGetContext(hwnd);
-        ImmSetCompositionFont(hImc, &wgf->lfont);
+        ImmSetCompositionFont(hImc, &wgs->lfont);
         ImmReleaseContext(hwnd, hImc);
         break;
       }
@@ -3625,7 +3625,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                   term, (unsigned short *)(buff+i), 1);
             }
             if (term->disptop != disptop) {
-                refresh_find_match_mask(wgf);
+                refresh_find_match_mask(wgs);
             }
           }
           free(buff);
@@ -3646,7 +3646,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             int disptop = term->disptop;
             term_keyinput(term, kbd_codepage, buf, 2);
             if (term->disptop != disptop) {
-                refresh_find_match_mask(wgf);
+                refresh_find_match_mask(wgs);
             }
         } else {
             char c = (unsigned char) wParam;
@@ -3654,7 +3654,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             term_seen_key_event(term);
             term_keyinput(term, kbd_codepage, &c, 1);
             if (term->disptop != disptop) {
-                refresh_find_match_mask(wgf);
+                refresh_find_match_mask(wgs);
             }
         }
         return (0);
@@ -3674,17 +3674,17 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             int disptop = term->disptop;
 
             if (IS_HIGH_SURROGATE(c)) {
-                wgf->syschar.pending_surrogate = c;
-            } else if (IS_SURROGATE_PAIR(wgf->syschar.pending_surrogate, c)) {
+                wgs->syschar.pending_surrogate = c;
+            } else if (IS_SURROGATE_PAIR(wgs->syschar.pending_surrogate, c)) {
                 wchar_t pair[2];
-                pair[0] = wgf->syschar.pending_surrogate;
+                pair[0] = wgs->syschar.pending_surrogate;
                 pair[1] = c;
                 term_keyinputw(term, pair, 2);
             } else if (!IS_SURROGATE(c)) {
                 term_keyinputw(term, &c, 1);
             }
             if (term->disptop != disptop) {
-                refresh_find_match_mask(wgf);
+                refresh_find_match_mask(wgs);
             }
         }
         return 0;
@@ -3696,7 +3696,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         if (conf_get_bool(conf, CONF_system_colour)) {
             /* Refresh palette from system colours. */
             term_notify_palette_changed(term);
-            init_palette(wgf);
+            init_palette(wgs);
             /* Force a repaint of the terminal window. */
             term_invalidate(term);
         }
@@ -3718,7 +3718,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         }
         if (new != current) {
             tab_bar_select_tab(new);
-            activate_session((WinGuiFrontend *)pointer_array_get(new));
+            activate_session((WinGuiSession *)pointer_array_get(new));
         }
         return 0;
       }
@@ -3731,12 +3731,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             bool shift_pressed = false, control_pressed = false;
 
             if (message == WM_MOUSEWHEEL || message == WM_MOUSEHWHEEL) {
-                wgf->wheel_accumulator += (short)HIWORD(wParam);
+                wgs->wheel_accumulator += (short)HIWORD(wParam);
                 shift_pressed=LOWORD(wParam) & MK_SHIFT;
                 control_pressed=LOWORD(wParam) & MK_CONTROL;
             } else {
                 BYTE keys[256];
-                wgf->wheel_accumulator += (int)wParam;
+                wgs->wheel_accumulator += (int)wParam;
                 if (GetKeyboardState(keys)!=0) {
                     shift_pressed=keys[VK_SHIFT]&0x80;
                     control_pressed=keys[VK_CONTROL]&0x80;
@@ -3746,20 +3746,20 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             /* process events when the threshold is reached */
             int disptop = term->disptop;
 
-            while (abs(wgf->wheel_accumulator) >= WHEEL_DELTA) {
+            while (abs(wgs->wheel_accumulator) >= WHEEL_DELTA) {
                 int b;
 
                 /* reduce amount for next time */
-                if (wgf->wheel_accumulator > 0) {
+                if (wgs->wheel_accumulator > 0) {
                     b = message == WM_MOUSEHWHEEL ? MBT_WHEEL_RIGHT : MBT_WHEEL_UP;
-                    wgf->wheel_accumulator -= WHEEL_DELTA;
-                } else if (wgf->wheel_accumulator < 0) {
+                    wgs->wheel_accumulator -= WHEEL_DELTA;
+                } else if (wgs->wheel_accumulator < 0) {
                     b =  message == WM_MOUSEHWHEEL ? MBT_WHEEL_LEFT : MBT_WHEEL_DOWN;
-                    wgf->wheel_accumulator += WHEEL_DELTA;
+                    wgs->wheel_accumulator += WHEEL_DELTA;
                 } else
                     break;
 
-                if (wgf->send_raw_mouse &&
+                if (wgs->send_raw_mouse &&
                     !(conf_get_bool(conf, CONF_mouse_override) &&
                       shift_pressed)) {
                     /* Mouse wheel position is in screen coordinates for
@@ -3783,7 +3783,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 }
             }
             if (term->disptop != disptop) {
-                refresh_find_match_mask(wgf);
+                refresh_find_match_mask(wgs);
             }
             return 0;
         }
@@ -3804,8 +3804,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
  */
 static void wintw_set_cursor_pos(TermWin *tw, int x, int y)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
-    Terminal *term = wgf->term;
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
+    Terminal *term = wgs->term;
     int cx, cy;
 
     if (!term->has_focus) return;
@@ -3814,28 +3814,28 @@ static void wintw_set_cursor_pos(TermWin *tw, int x, int y)
      * Avoid gratuitously re-updating the cursor position and IMM
      * window if there's no actual change required.
      */
-    cx = x * wgf->font_width + wgf->offset_width;
-    cy = y * wgf->font_height + wgf->offset_height;
-    if (cx == wgf->caret_x && cy == wgf->caret_y)
+    cx = x * wgs->font_width + wgs->offset_width;
+    cy = y * wgs->font_height + wgs->offset_height;
+    if (cx == wgs->caret_x && cy == wgs->caret_y)
         return;
-    wgf->caret_x = cx;
-    wgf->caret_y = cy;
+    wgs->caret_x = cx;
+    wgs->caret_y = cy;
 
-    sys_cursor_update(wgf);
+    sys_cursor_update(wgs);
 }
 
-static void sys_cursor_update(WinGuiFrontend *wgf)
+static void sys_cursor_update(WinGuiSession *wgs)
 {
-    Terminal *term = wgf->term;
+    Terminal *term = wgs->term;
     COMPOSITIONFORM cf;
     HIMC hIMC;
 
     if (!term->has_focus) return;
 
-    if (wgf->caret_x < 0 || wgf->caret_y < 0)
+    if (wgs->caret_x < 0 || wgs->caret_y < 0)
         return;
 
-    SetCaretPos(wgf->caret_x, wgf->caret_y);
+    SetCaretPos(wgs->caret_x, wgs->caret_y);
 
     /* IMM calls on Win98 and beyond only */
     if (osPlatformId == VER_PLATFORM_WIN32s) return; /* 3.11 */
@@ -3846,8 +3846,8 @@ static void sys_cursor_update(WinGuiFrontend *wgf)
     /* we should have the IMM functions */
     hIMC = ImmGetContext(term_hwnd);
     cf.dwStyle = CFS_POINT;
-    cf.ptCurrentPos.x = wgf->caret_x;
-    cf.ptCurrentPos.y = wgf->caret_y;
+    cf.ptCurrentPos.x = wgs->caret_x;
+    cf.ptCurrentPos.y = wgs->caret_y;
     ImmSetCompositionWindow(hIMC, &cf);
 
     ImmReleaseContext(term_hwnd, hIMC);
@@ -3879,12 +3879,12 @@ static void draw_horizontal_line_on_text(HDC wintw_hdc, int y, int lattr, RECT l
  * We are allowed to fiddle with the contents of `text'.
  */
 static void do_text_internal(
-    WinGuiFrontend *wgf,
+    WinGuiSession *wgs,
     int x, int y, wchar_t *text, int len,
     unsigned long attr, int lattr, truecolour truecolour)
 {
-    Terminal *term = wgf->term;
-    HDC wintw_hdc = wgf->wintw_hdc;
+    Terminal *term = wgs->term;
+    HDC wintw_hdc = wgs->wintw_hdc;
     COLORREF fg, bg, t;
     int nfg, nbg, nfont;
     RECT line_box;
@@ -3902,7 +3902,7 @@ static void do_text_internal(
 
     lattr &= LATTR_MODE;
 
-    char_width = fnt_width = wgf->font_width * (1 + (lattr != LATTR_NORM));
+    char_width = fnt_width = wgs->font_width * (1 + (lattr != LATTR_NORM));
 
     if (attr & ATTR_WIDE)
         char_width *= 2;
@@ -3912,11 +3912,11 @@ static void do_text_internal(
         return;
 
     x *= fnt_width;
-    y *= wgf->font_height;
-    x += wgf->offset_width;
-    y += wgf->offset_height;
+    y *= wgs->font_height;
+    x += wgs->offset_width;
+    y += wgs->offset_height;
 
-    if ((attr & TATTR_ACTCURS) && (wgf->cursor_type == 0 || term->big_cursor)) {
+    if ((attr & TATTR_ACTCURS) && (wgs->cursor_type == 0 || term->big_cursor)) {
         truecolour.fg = truecolour.bg = optionalrgb_none;
         attr &= ~(ATTR_REVERSE|ATTR_BLINK|ATTR_COLOURS|ATTR_DIM);
         /* cursor fg and bg */
@@ -3925,7 +3925,7 @@ static void do_text_internal(
     }
 
     nfont = 0;
-    if (wgf->vtmode == VT_POORMAN && lattr != LATTR_NORM) {
+    if (wgs->vtmode == VT_POORMAN && lattr != LATTR_NORM) {
         /* Assume a poorman font is borken in other ways too. */
         lattr = LATTR_WIDE;
     } else
@@ -3947,21 +3947,21 @@ static void do_text_internal(
     if (text[0] >= 0x23BA && text[0] <= 0x23BD) {
         switch ((unsigned char) (text[0])) {
           case 0xBA:
-            text_adjust = -2 * wgf->font_height / 5;
+            text_adjust = -2 * wgs->font_height / 5;
             break;
           case 0xBB:
-            text_adjust = -1 * wgf->font_height / 5;
+            text_adjust = -1 * wgs->font_height / 5;
             break;
           case 0xBC:
-            text_adjust = wgf->font_height / 5;
+            text_adjust = wgs->font_height / 5;
             break;
           case 0xBD:
-            text_adjust = 2 * wgf->font_height / 5;
+            text_adjust = 2 * wgs->font_height / 5;
             break;
         }
         if (lattr == LATTR_TOP || lattr == LATTR_BOT)
             text_adjust *= 2;
-        text[0] = wgf->ucsdata.unitab_xterm['q'];
+        text[0] = wgs->ucsdata.unitab_xterm['q'];
         if (attr & ATTR_UNDER) {
             attr &= ~ATTR_UNDER;
             force_manual_underline = true;
@@ -3983,20 +3983,20 @@ static void do_text_internal(
 
     nfg = ((attr & ATTR_FGMASK) >> ATTR_FGSHIFT);
     nbg = ((attr & ATTR_BGMASK) >> ATTR_BGSHIFT);
-    if (wgf->bold_font_mode == BOLD_FONT && (attr & ATTR_BOLD))
+    if (wgs->bold_font_mode == BOLD_FONT && (attr & ATTR_BOLD))
         nfont |= FONT_BOLD;
-    if (wgf->und_mode == UND_FONT && (attr & ATTR_UNDER))
+    if (wgs->und_mode == UND_FONT && (attr & ATTR_UNDER))
         nfont |= FONT_UNDERLINE;
-    another_font(wgf, nfont);
-    if (!wgf->fonts[nfont]) {
+    another_font(wgs, nfont);
+    if (!wgs->fonts[nfont]) {
         if (nfont & FONT_UNDERLINE)
             force_manual_underline = true;
         /* Don't do the same for manual bold, it could be bad news. */
 
         nfont &= ~(FONT_BOLD | FONT_UNDERLINE);
     }
-    another_font(wgf, nfont);
-    if (!wgf->fonts[nfont])
+    another_font(wgs, nfont);
+    if (!wgs->fonts[nfont])
         nfont = FONT_NORMAL;
     if (attr & ATTR_REVERSE) {
         struct optionalrgb trgb;
@@ -4009,31 +4009,31 @@ static void do_text_internal(
         truecolour.fg = truecolour.bg;
         truecolour.bg = trgb;
     }
-    if (wgf->bold_colours && (attr & ATTR_BOLD) && !is_cursor) {
+    if (wgs->bold_colours && (attr & ATTR_BOLD) && !is_cursor) {
         if (nfg < 16) nfg |= 8;
         else if (nfg >= 256) nfg |= 1;
     }
-    if (wgf->bold_colours && (attr & ATTR_BLINK)) {
+    if (wgs->bold_colours && (attr & ATTR_BLINK)) {
         if (nbg < 16) nbg |= 8;
         else if (nbg >= 256) nbg |= 1;
     }
-    if (!wgf->pal && truecolour.fg.enabled)
+    if (!wgs->pal && truecolour.fg.enabled)
         fg = RGB(truecolour.fg.r, truecolour.fg.g, truecolour.fg.b);
     else
-        fg = wgf->colours[nfg];
+        fg = wgs->colours[nfg];
 
-    if (!wgf->pal && truecolour.bg.enabled)
+    if (!wgs->pal && truecolour.bg.enabled)
         bg = RGB(truecolour.bg.r, truecolour.bg.g, truecolour.bg.b);
     else
-        bg = wgf->colours[nbg];
+        bg = wgs->colours[nbg];
 
-    if (!wgf->pal && (attr & ATTR_DIM)) {
+    if (!wgs->pal && (attr & ATTR_DIM)) {
         fg = RGB(GetRValue(fg) * 2 / 3,
                  GetGValue(fg) * 2 / 3,
                  GetBValue(fg) * 2 / 3);
     }
 
-    SelectObject(wintw_hdc, wgf->fonts[nfont]);
+    SelectObject(wintw_hdc, wgs->fonts[nfont]);
     SetTextColor(wintw_hdc, fg);
     SetBkColor(wintw_hdc, bg);
     if (attr & TATTR_COMBINING)
@@ -4043,7 +4043,7 @@ static void do_text_internal(
     line_box.left = x;
     line_box.top = y;
     line_box.right = x + char_width * len;
-    line_box.bottom = y + wgf->font_height;
+    line_box.bottom = y + wgs->font_height;
     /* adjust line_box.right for SURROGATE PAIR & VARIATION SELECTOR */
     {
         int i;
@@ -4064,10 +4064,10 @@ static void do_text_internal(
     }
 
     /* Only want the left half of double width lines */
-    if (line_box.right > wgf->font_width*term->cols+wgf->offset_width)
-        line_box.right = wgf->font_width*term->cols+wgf->offset_width;
+    if (line_box.right > wgs->font_width*term->cols+wgs->offset_width)
+        line_box.right = wgs->font_width*term->cols+wgs->offset_width;
 
-    if (wgf->font_varpitch) {
+    if (wgs->font_varpitch) {
         /*
          * If we're using a variable-pitch font, we unconditionally
          * draw the glyphs one at a time and centre them in their
@@ -4134,7 +4134,7 @@ static void do_text_internal(
         }
 
         /* We're using a private area for direct to font. (512 chars.) */
-        if (wgf->ucsdata.dbcs_screenfont && (text[0] & CSET_MASK) == CSET_ACP) {
+        if (wgs->ucsdata.dbcs_screenfont && (text[0] & CSET_MASK) == CSET_ACP) {
             /* Ho Hum, dbcs fonts are a PITA! */
             /* To display on W9x I have to convert to UCS */
             static wchar_t *uni_buf = 0;
@@ -4148,19 +4148,19 @@ static void do_text_internal(
 
             for(nlen = mptr = 0; mptr<len; mptr++) {
                 uni_buf[nlen] = 0xFFFD;
-                if (IsDBCSLeadByteEx(wgf->ucsdata.font_codepage,
+                if (IsDBCSLeadByteEx(wgs->ucsdata.font_codepage,
                                      (BYTE) text[mptr])) {
                     char dbcstext[2];
                     dbcstext[0] = text[mptr] & 0xFF;
                     dbcstext[1] = text[mptr+1] & 0xFF;
                     lpDx[nlen] += char_width;
-                    MultiByteToWideChar(wgf->ucsdata.font_codepage, MB_USEGLYPHCHARS,
+                    MultiByteToWideChar(wgs->ucsdata.font_codepage, MB_USEGLYPHCHARS,
                                         dbcstext, 2, uni_buf+nlen, 1);
                     mptr++;
                 } else {
                     char dbcstext[1];
                     dbcstext[0] = text[mptr] & 0xFF;
-                    MultiByteToWideChar(wgf->ucsdata.font_codepage, MB_USEGLYPHCHARS,
+                    MultiByteToWideChar(wgs->ucsdata.font_codepage, MB_USEGLYPHCHARS,
                                         dbcstext, 1, uni_buf+nlen, 1);
                 }
                 nlen++;
@@ -4169,14 +4169,14 @@ static void do_text_internal(
                 return;                /* Eeek! */
 
             ExtTextOutW(wintw_hdc, x + xoffset,
-                        y - wgf->font_height * (lattr == LATTR_BOT) + text_adjust,
+                        y - wgs->font_height * (lattr == LATTR_BOT) + text_adjust,
                         ETO_CLIPPED | (opaque ? ETO_OPAQUE : 0),
                         &line_box, uni_buf, nlen,
                         lpDx_maybe);
-            if (wgf->bold_font_mode == BOLD_SHADOW && (attr & ATTR_BOLD)) {
+            if (wgs->bold_font_mode == BOLD_SHADOW && (attr & ATTR_BOLD)) {
                 SetBkMode(wintw_hdc, TRANSPARENT);
                 ExtTextOutW(wintw_hdc, x + xoffset - 1,
-                            y - wgf->font_height * (lattr ==
+                            y - wgs->font_height * (lattr ==
                                                LATTR_BOT) + text_adjust,
                             ETO_CLIPPED, &line_box, uni_buf, nlen, lpDx_maybe);
             }
@@ -4191,10 +4191,10 @@ static void do_text_internal(
                 directbuf[i] = text[i] & 0xFF;
 
             ExtTextOut(wintw_hdc, x + xoffset,
-                       y - wgf->font_height * (lattr == LATTR_BOT) + text_adjust,
+                       y - wgs->font_height * (lattr == LATTR_BOT) + text_adjust,
                        ETO_CLIPPED | (opaque ? ETO_OPAQUE : 0),
                        &line_box, directbuf, len, lpDx_maybe);
-            if (wgf->bold_font_mode == BOLD_SHADOW && (attr & ATTR_BOLD)) {
+            if (wgs->bold_font_mode == BOLD_SHADOW && (attr & ATTR_BOLD)) {
                 SetBkMode(wintw_hdc, TRANSPARENT);
 
                 /* GRR: This draws the character outside its box and
@@ -4207,7 +4207,7 @@ static void do_text_internal(
                  * column is blank...
                  */
                 ExtTextOut(wintw_hdc, x + xoffset - 1,
-                           y - wgf->font_height * (lattr ==
+                           y - wgs->font_height * (lattr ==
                                               LATTR_BOT) + text_adjust,
                            ETO_CLIPPED, &line_box, directbuf, len, lpDx_maybe);
             }
@@ -4228,15 +4228,15 @@ static void do_text_internal(
 
             /* print Glyphs as they are, without Windows' Shaping*/
             general_textout(wintw_hdc, x + xoffset,
-                            y - wgf->font_height * (lattr==LATTR_BOT) + text_adjust,
+                            y - wgs->font_height * (lattr==LATTR_BOT) + text_adjust,
                             &line_box, wbuf, len, lpDx,
-                            opaque && !(attr & TATTR_COMBINING), wgf->font_varpitch);
+                            opaque && !(attr & TATTR_COMBINING), wgs->font_varpitch);
 
             /* And the shadow bold hack. */
-            if (wgf->bold_font_mode == BOLD_SHADOW && (attr & ATTR_BOLD)) {
+            if (wgs->bold_font_mode == BOLD_SHADOW && (attr & ATTR_BOLD)) {
                 SetBkMode(wintw_hdc, TRANSPARENT);
                 ExtTextOutW(wintw_hdc, x + xoffset - 1,
-                            y - wgf->font_height * (lattr ==
+                            y - wgs->font_height * (lattr ==
                                                LATTR_BOT) + text_adjust,
                             ETO_CLIPPED, &line_box, wbuf, len, lpDx_maybe);
             }
@@ -4251,11 +4251,11 @@ static void do_text_internal(
     }
 
     if (lattr != LATTR_TOP && (force_manual_underline ||
-                               (wgf->und_mode == UND_LINE && (attr & ATTR_UNDER))))
-        draw_horizontal_line_on_text(wgf->wintw_hdc, wgf->descent, lattr, line_box, fg, wgf->font_height);
+                               (wgs->und_mode == UND_LINE && (attr & ATTR_UNDER))))
+        draw_horizontal_line_on_text(wgs->wintw_hdc, wgs->descent, lattr, line_box, fg, wgs->font_height);
 
     if (attr & ATTR_STRIKE)
-        draw_horizontal_line_on_text(wgf->wintw_hdc, wgf->font_strikethrough_y, lattr, line_box, fg, wgf->font_height);
+        draw_horizontal_line_on_text(wgs->wintw_hdc, wgs->font_strikethrough_y, lattr, line_box, fg, wgs->font_height);
 }
 
 /*
@@ -4265,7 +4265,7 @@ static void wintw_draw_text(
     TermWin *tw, int x, int y, wchar_t *text, int len,
     unsigned long attr, int lattr, truecolour truecolour)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
     if (attr & TATTR_COMBINING) {
         unsigned long a = 0;
         int len0 = 1;
@@ -4274,13 +4274,13 @@ static void wintw_draw_text(
             len0 = 2;
         if (len-len0 >= 1 && IS_LOW_VARSEL(text[len0])) {
             attr &= ~TATTR_COMBINING;
-            do_text_internal(wgf, x, y, text, len0+1, attr, lattr, truecolour);
+            do_text_internal(wgs, x, y, text, len0+1, attr, lattr, truecolour);
             text += len0+1;
             len -= len0+1;
             a = TATTR_COMBINING;
         } else if (len-len0 >= 2 && IS_HIGH_VARSEL(text[len0], text[len0+1])) {
             attr &= ~TATTR_COMBINING;
-            do_text_internal(wgf, x, y, text, len0+2, attr, lattr, truecolour);
+            do_text_internal(wgs, x, y, text, len0+2, attr, lattr, truecolour);
             text += len0+2;
             len -= len0+2;
             a = TATTR_COMBINING;
@@ -4290,29 +4290,29 @@ static void wintw_draw_text(
 
         while (len--) {
             if (len >= 1 && IS_SURROGATE_PAIR(text[0], text[1])) {
-                do_text_internal(wgf, x, y, text, 2, attr | a, lattr, truecolour);
+                do_text_internal(wgs, x, y, text, 2, attr | a, lattr, truecolour);
                 len--;
                 text++;
             } else
-                do_text_internal(wgf, x, y, text, 1, attr | a, lattr, truecolour);
+                do_text_internal(wgs, x, y, text, 1, attr | a, lattr, truecolour);
 
             text++;
             a = TATTR_COMBINING;
         }
     } else
-        do_text_internal(wgf, x, y, text, len, attr, lattr, truecolour);
+        do_text_internal(wgs, x, y, text, len, attr, lattr, truecolour);
 }
 
 static void wintw_draw_cursor(
     TermWin *tw, int x, int y, wchar_t *text, int len,
     unsigned long attr, int lattr, truecolour truecolour)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
-    Terminal *term = wgf->term;
-    HDC wintw_hdc = wgf->wintw_hdc;
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
+    Terminal *term = wgs->term;
+    HDC wintw_hdc = wgs->wintw_hdc;
     int fnt_width;
     int char_width;
-    int ctype = wgf->cursor_type;
+    int ctype = wgs->cursor_type;
 
     lattr &= LATTR_MODE;
 
@@ -4325,13 +4325,13 @@ static void wintw_draw_cursor(
         attr |= TATTR_RIGHTCURS;
     }
 
-    fnt_width = char_width = wgf->font_width * (1 + (lattr != LATTR_NORM));
+    fnt_width = char_width = wgs->font_width * (1 + (lattr != LATTR_NORM));
     if (attr & ATTR_WIDE)
         char_width *= 2;
     x *= fnt_width;
-    y *= wgf->font_height;
-    x += wgf->offset_width;
-    y += wgf->offset_height;
+    y *= wgs->font_height;
+    x += wgs->offset_width;
+    y += wgs->offset_height;
 
     if ((attr & TATTR_PASCURS) && (ctype == 0 || term->big_cursor)) {
         POINT pts[5];
@@ -4339,8 +4339,8 @@ static void wintw_draw_cursor(
         pts[0].x = pts[1].x = pts[4].x = x;
         pts[2].x = pts[3].x = x + char_width - 1;
         pts[0].y = pts[3].y = pts[4].y = y;
-        pts[1].y = pts[2].y = y + wgf->font_height - 1;
-        oldpen = SelectObject(wintw_hdc, CreatePen(PS_SOLID, 0, wgf->colours[261]));
+        pts[1].y = pts[2].y = y + wgs->font_height - 1;
+        oldpen = SelectObject(wintw_hdc, CreatePen(PS_SOLID, 0, wgs->colours[261]));
         Polyline(wintw_hdc, pts, 5);
         oldpen = SelectObject(wintw_hdc, oldpen);
         DeleteObject(oldpen);
@@ -4348,7 +4348,7 @@ static void wintw_draw_cursor(
         int startx, starty, dx, dy, length, i;
         if (ctype == 1) {
             startx = x;
-            starty = y + wgf->descent;
+            starty = y + wgs->descent;
             dx = 1;
             dy = 0;
             length = char_width;
@@ -4360,12 +4360,12 @@ static void wintw_draw_cursor(
             starty = y;
             dx = 0;
             dy = 1;
-            length = wgf->font_height;
+            length = wgs->font_height;
         }
         if (attr & TATTR_ACTCURS) {
             HPEN oldpen;
             oldpen =
-                SelectObject(wintw_hdc, CreatePen(PS_SOLID, 0, wgf->colours[261]));
+                SelectObject(wintw_hdc, CreatePen(PS_SOLID, 0, wgs->colours[261]));
             MoveToEx(wintw_hdc, startx, starty, NULL);
             LineTo(wintw_hdc, startx + dx * length, starty + dy * length);
             oldpen = SelectObject(wintw_hdc, oldpen);
@@ -4373,7 +4373,7 @@ static void wintw_draw_cursor(
         } else {
             for (i = 0; i < length; i++) {
                 if (i % 2 == 0) {
-                    SetPixel(wintw_hdc, startx, starty, wgf->colours[261]);
+                    SetPixel(wintw_hdc, startx, starty, wgs->colours[261]);
                 }
                 startx += dx;
                 starty += dy;
@@ -4384,14 +4384,14 @@ static void wintw_draw_cursor(
 
 static void wintw_draw_trust_sigil(TermWin *tw, int x, int y)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
 
-    x *= wgf->font_width;
-    y *= wgf->font_height;
-    x += wgf->offset_width;
-    y += wgf->offset_height;
+    x *= wgs->font_width;
+    y *= wgs->font_height;
+    x += wgs->offset_width;
+    y += wgs->offset_height;
 
-    DrawIconEx(wgf->wintw_hdc, x, y, wgf->trust_icon, wgf->font_width * 2, wgf->font_height,
+    DrawIconEx(wgs->wintw_hdc, x, y, wgs->trust_icon, wgs->font_width * 2, wgs->font_height,
                0, NULL, DI_NORMAL);
 }
 
@@ -4399,40 +4399,40 @@ static void wintw_draw_trust_sigil(TermWin *tw, int x, int y)
  */
 static int wintw_char_width(TermWin *tw, int uc)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
-    HDC wintw_hdc = wgf->wintw_hdc;
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
+    HDC wintw_hdc = wgs->wintw_hdc;
     int ibuf = 0;
 
     /* If the font max is the same as the font ave width then this
      * function is a no-op.
      */
-    if (!wgf->font_dualwidth) return 1;
+    if (!wgs->font_dualwidth) return 1;
 
     switch (uc & CSET_MASK) {
       case CSET_ASCII:
-        uc = wgf->ucsdata.unitab_line[uc & 0xFF];
+        uc = wgs->ucsdata.unitab_line[uc & 0xFF];
         break;
       case CSET_LINEDRW:
-        uc = wgf->ucsdata.unitab_xterm[uc & 0xFF];
+        uc = wgs->ucsdata.unitab_xterm[uc & 0xFF];
         break;
       case CSET_SCOACS:
-        uc = wgf->ucsdata.unitab_scoacs[uc & 0xFF];
+        uc = wgs->ucsdata.unitab_scoacs[uc & 0xFF];
         break;
     }
     if (DIRECT_FONT(uc)) {
-        if (wgf->ucsdata.dbcs_screenfont) return 1;
+        if (wgs->ucsdata.dbcs_screenfont) return 1;
 
         /* Speedup, I know of no font where ascii is the wrong width */
         if ((uc&~CSET_MASK) >= ' ' && (uc&~CSET_MASK)<= '~')
             return 1;
 
         if ( (uc & CSET_MASK) == CSET_ACP ) {
-            SelectObject(wintw_hdc, wgf->fonts[FONT_NORMAL]);
+            SelectObject(wintw_hdc, wgs->fonts[FONT_NORMAL]);
         } else if ( (uc & CSET_MASK) == CSET_OEMCP ) {
-            another_font(wgf, FONT_OEM);
-            if (!wgf->fonts[FONT_OEM]) return 0;
+            another_font(wgs, FONT_OEM);
+            if (!wgs->fonts[FONT_OEM]) return 0;
 
-            SelectObject(wintw_hdc, wgf->fonts[FONT_OEM]);
+            SelectObject(wintw_hdc, wgs->fonts[FONT_OEM]);
         } else
             return 0;
 
@@ -4445,7 +4445,7 @@ static int wintw_char_width(TermWin *tw, int uc)
         /* Speedup, I know of no font where ascii is the wrong width */
         if (uc >= ' ' && uc <= '~') return 1;
 
-        SelectObject(wintw_hdc, wgf->fonts[FONT_NORMAL]);
+        SelectObject(wintw_hdc, wgs->fonts[FONT_NORMAL]);
         if (GetCharWidth32W(wintw_hdc, uc, uc, &ibuf) == 1)
             /* Okay that one worked */ ;
         else if (GetCharWidthW(wintw_hdc, uc, uc, &ibuf) == 1)
@@ -4454,8 +4454,8 @@ static int wintw_char_width(TermWin *tw, int uc)
             return 0;
     }
 
-    ibuf += wgf->font_width / 2 -1;
-    ibuf /= wgf->font_width;
+    ibuf += wgs->font_width / 2 -1;
+    ibuf /= wgs->font_width;
 
     return ibuf;
 }
@@ -4488,11 +4488,11 @@ static void init_winfuncs(void)
  * -1 to forward the message to Windows, or another negative number
  * to indicate a NUL-terminated "special" string.
  */
-static int TranslateKey(WinGuiFrontend *wgf, UINT message, WPARAM wParam, LPARAM lParam,
+static int TranslateKey(WinGuiSession *wgs, UINT message, WPARAM wParam, LPARAM lParam,
                         unsigned char *output)
 {
-    Conf *conf = wgf->conf;
-    Terminal *term = wgf->term;
+    Conf *conf = wgs->conf;
+    Terminal *term = wgs->term;
     BYTE keystate[256];
     int scan, shift_state;
     bool left_alt = false, key_down;
@@ -4634,34 +4634,34 @@ static int TranslateKey(WinGuiFrontend *wgf, UINT message, WPARAM wParam, LPARAM
         + ((keystate[VK_CONTROL] & 0x80) != 0) * 2;
 
     /* Note if AltGr was pressed and if it was used as a compose key */
-    if (!wgf->compose_state) {
-        wgf->translate_key.compose_keycode = 0x100;
+    if (!wgs->compose_state) {
+        wgs->translate_key.compose_keycode = 0x100;
         if (conf_get_bool(conf, CONF_compose_key)) {
             if (wParam == VK_MENU && (HIWORD(lParam) & KF_EXTENDED))
-                wgf->translate_key.compose_keycode = wParam;
+                wgs->translate_key.compose_keycode = wParam;
         }
         if (wParam == VK_APPS)
-            wgf->translate_key.compose_keycode = wParam;
+            wgs->translate_key.compose_keycode = wParam;
     }
 
-    if (wParam == wgf->translate_key.compose_keycode) {
-        if (wgf->compose_state == 0 &&
+    if (wParam == wgs->translate_key.compose_keycode) {
+        if (wgs->compose_state == 0 &&
             (HIWORD(lParam) & (KF_UP | KF_REPEAT)) == 0)
-            wgf->compose_state = 1;
-        else if (wgf->compose_state == 1 && (HIWORD(lParam) & KF_UP))
-            wgf->compose_state = 2;
+            wgs->compose_state = 1;
+        else if (wgs->compose_state == 1 && (HIWORD(lParam) & KF_UP))
+            wgs->compose_state = 2;
         else
-            wgf->compose_state = 0;
-    } else if (wgf->compose_state == 1 && wParam != VK_CONTROL)
-        wgf->compose_state = 0;
+            wgs->compose_state = 0;
+    } else if (wgs->compose_state == 1 && wParam != VK_CONTROL)
+        wgs->compose_state = 0;
 
-    if (wgf->compose_state > 1 && left_alt)
-        wgf->compose_state = 0;
+    if (wgs->compose_state > 1 && left_alt)
+        wgs->compose_state = 0;
 
     /* Sanitize the number pad if not using a PC NumPad */
     if (left_alt || (term->app_keypad_keys && !no_applic_k
                      && funky_type != FUNKY_XTERM)
-        || funky_type == FUNKY_VT400 || nethack_keypad || wgf->compose_state) {
+        || funky_type == FUNKY_VT400 || nethack_keypad || wgs->compose_state) {
         if ((HIWORD(lParam) & KF_EXTENDED) == 0) {
             int nParam = 0;
             switch (wParam) {
@@ -4708,7 +4708,7 @@ static int TranslateKey(WinGuiFrontend *wgf, UINT message, WPARAM wParam, LPARAM
     }
 
     /* If a key is pressed and AltGr is not active */
-    if (key_down && (keystate[VK_RMENU] & 0x80) == 0 && !wgf->compose_state) {
+    if (key_down && (keystate[VK_RMENU] & 0x80) == 0 && !wgs->compose_state) {
         /* Okay, prepare for most alts then ... */
         if (left_alt)
             *p++ = '\033';
@@ -4743,7 +4743,7 @@ static int TranslateKey(WinGuiFrontend *wgf, UINT message, WPARAM wParam, LPARAM
             int disptop = term->disptop;
             term_scroll_to_selection(term, (wParam == VK_PRIOR ? 0 : 1));
             if (term->disptop != disptop) {
-                refresh_find_match_mask(wgf);
+                refresh_find_match_mask(wgs);
             }
             return 0;
         }
@@ -4798,7 +4798,7 @@ static int TranslateKey(WinGuiFrontend *wgf, UINT message, WPARAM wParam, LPARAM
             return 0;
         }
         if (wParam == 'F' && shift_state == 3) {
-            show_finddlg(wgf_active);
+            show_finddlg(wgs_active);
             return 0;
         }
         if (wParam == VK_TAB) {
@@ -4859,8 +4859,8 @@ static int TranslateKey(WinGuiFrontend *wgf, UINT message, WPARAM wParam, LPARAM
             return p - output;
         }
         if (wParam == VK_CANCEL && shift_state == 2) {  /* Ctrl-Break */
-            if (wgf->backend)
-                backend_special(wgf->backend, SS_BRK, 0);
+            if (wgs->backend)
+                backend_special(wgs->backend, SS_BRK, 0);
             return 0;
         }
         if (wParam == VK_PAUSE) {      /* Break/Pause */
@@ -4911,9 +4911,9 @@ static int TranslateKey(WinGuiFrontend *wgf, UINT message, WPARAM wParam, LPARAM
              * numeric character code input */
             if (left_alt) {
                 if (keypad_key >= '0' && keypad_key <= '9')
-                    wgf->translate_key.alt_sum = wgf->translate_key.alt_sum * 10 + keypad_key - '0';
+                    wgs->translate_key.alt_sum = wgs->translate_key.alt_sum * 10 + keypad_key - '0';
                 else
-                    wgf->translate_key.alt_sum = 0;
+                    wgs->translate_key.alt_sum = 0;
                 break;
             }
 
@@ -5072,11 +5072,11 @@ static int TranslateKey(WinGuiFrontend *wgf, UINT message, WPARAM wParam, LPARAM
         }
 #ifdef SHOW_TOASCII_RESULT
         if (r == 1 && !key_down) {
-            if (wgf->translate_key.alt_sum) {
-                if (in_utf(term) || wgf->ucsdata.dbcs_screenfont)
-                    debug(", (U+%04x)", wgf->translate_key.alt_sum);
+            if (wgs->translate_key.alt_sum) {
+                if (in_utf(term) || wgs->ucsdata.dbcs_screenfont)
+                    debug(", (U+%04x)", wgs->translate_key.alt_sum);
                 else
-                    debug(", LCH(%d)", wgf->translate_key.alt_sum);
+                    debug(", LCH(%d)", wgs->translate_key.alt_sum);
             } else {
                 debug(", ACH(%d)", keys_unicode[0]);
             }
@@ -5096,16 +5096,16 @@ static int TranslateKey(WinGuiFrontend *wgf, UINT message, WPARAM wParam, LPARAM
             for (i = 0; i < r; i++) {
                 wchar_t wch = keys_unicode[i];
 
-                if (wgf->compose_state == 2 && wch >= ' ' && wch < 0x80) {
-                    wgf->translate_key.compose_char = wch;
-                    wgf->compose_state++;
+                if (wgs->compose_state == 2 && wch >= ' ' && wch < 0x80) {
+                    wgs->translate_key.compose_char = wch;
+                    wgs->compose_state++;
                     continue;
                 }
-                if (wgf->compose_state == 3 && wch >= ' ' && wch < 0x80) {
+                if (wgs->compose_state == 3 && wch >= ' ' && wch < 0x80) {
                     int nc;
-                    wgf->compose_state = 0;
+                    wgs->compose_state = 0;
 
-                    if ((nc = check_compose(wgf->translate_key.compose_char, wch)) == -1) {
+                    if ((nc = check_compose(wgs->translate_key.compose_char, wch)) == -1) {
                         MessageBeep(MB_ICONHAND);
                         return 0;
                     }
@@ -5114,15 +5114,15 @@ static int TranslateKey(WinGuiFrontend *wgf, UINT message, WPARAM wParam, LPARAM
                     continue;
                 }
 
-                wgf->compose_state = 0;
+                wgs->compose_state = 0;
 
                 if (!key_down) {
-                    if (wgf->translate_key.alt_sum) {
-                        if (in_utf(term) || wgf->ucsdata.dbcs_screenfont) {
-                            keybuf = wgf->translate_key.alt_sum;
+                    if (wgs->translate_key.alt_sum) {
+                        if (in_utf(term) || wgs->ucsdata.dbcs_screenfont) {
+                            keybuf = wgs->translate_key.alt_sum;
                             term_keyinputw(term, &keybuf, 1);
                         } else {
-                            char ch = (char) wgf->translate_key.alt_sum;
+                            char ch = (char) wgs->translate_key.alt_sum;
                             /*
                              * We need not bother about stdin
                              * backlogs here, because in GUI PuTTY
@@ -5134,7 +5134,7 @@ static int TranslateKey(WinGuiFrontend *wgf, UINT message, WPARAM wParam, LPARAM
                              */
                             term_keyinput(term, -1, &ch, 1);
                         }
-                        wgf->translate_key.alt_sum = 0;
+                        wgs->translate_key.alt_sum = 0;
                     } else {
                         term_keyinputw(term, &wch, 1);
                     }
@@ -5151,7 +5151,7 @@ static int TranslateKey(WinGuiFrontend *wgf, UINT message, WPARAM wParam, LPARAM
                         term_keyinputw(term, cbuf +!left_alt, 1+!!left_alt);
                     }
                 }
-                show_mouseptr(wgf, false);
+                show_mouseptr(wgs, false);
             }
 
             /* This is so the ALT-Numpad and dead keys work correctly. */
@@ -5163,7 +5163,7 @@ static int TranslateKey(WinGuiFrontend *wgf, UINT message, WPARAM wParam, LPARAM
         if (!left_alt)
             keys_unicode[0] = 0;
         /* If we will be using alt_sum fix the 256s */
-        else if (keys_unicode[0] && (in_utf(term) || wgf->ucsdata.dbcs_screenfont))
+        else if (keys_unicode[0] && (in_utf(term) || wgs->ucsdata.dbcs_screenfont))
             keys_unicode[0] = 10;
     }
 
@@ -5182,36 +5182,36 @@ static int TranslateKey(WinGuiFrontend *wgf, UINT message, WPARAM wParam, LPARAM
 
 static void wintw_set_title(TermWin *tw, const char *title, int codepage)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
     wchar_t *new_window_name = dup_mb_to_wc(codepage, 0, title);
-    if (!wcscmp(new_window_name, wgf->window_name)) {
+    if (!wcscmp(new_window_name, wgs->window_name)) {
         sfree(new_window_name);
         return;
     }
-    sfree(wgf->window_name);
-    wgf->window_name = new_window_name;
-    if (wgf != wgf_active) {return;}
-    set_title_from_session(wgf);
+    sfree(wgs->window_name);
+    wgs->window_name = new_window_name;
+    if (wgs != wgs_active) {return;}
+    set_title_from_session(wgs);
 }
 
 static void wintw_set_icon_title(TermWin *tw, const char *title, int codepage)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
     wchar_t *new_icon_name = dup_mb_to_wc(codepage, 0, title);
-    if (!wcscmp(new_icon_name, wgf->icon_name)) {
+    if (!wcscmp(new_icon_name, wgs->icon_name)) {
         sfree(new_icon_name);
         return;
     }
-    sfree(wgf->icon_name);
-    wgf->icon_name = new_icon_name;
-    set_icon_title_from_session(wgf);
+    sfree(wgs->icon_name);
+    wgs->icon_name = new_icon_name;
+    set_icon_title_from_session(wgs);
 }
 
 static void wintw_set_scrollbar(TermWin *tw, int total, int start, int page)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
-    if (wgf != wgf_active) {return;}
-    if (!conf_get_bool(wgf->conf, is_full_screen() ?
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
+    if (wgs != wgs_active) {return;}
+    if (!conf_get_bool(wgs->conf, is_full_screen() ?
                        CONF_scrollbar_in_fullscreen : CONF_scrollbar))
         return;
     set_scrollbar(total, start, page, true);
@@ -5219,63 +5219,63 @@ static void wintw_set_scrollbar(TermWin *tw, int total, int start, int page)
 
 static bool wintw_setup_draw_ctx(TermWin *tw)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
-    if (wgf != wgf_active) {return false;}
-    if (wgf->find.data_arrived) {
-        wgf->find.data_arrived = false;
-        refresh_find_match_mask(wgf);
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
+    if (wgs != wgs_active) {return false;}
+    if (wgs->find.data_arrived) {
+        wgs->find.data_arrived = false;
+        refresh_find_match_mask(wgs);
     }
-    assert(!wgf->wintw_hdc);
-    wgf->wintw_hdc = make_hdc(wgf);
-    return wgf->wintw_hdc != NULL;
+    assert(!wgs->wintw_hdc);
+    wgs->wintw_hdc = make_hdc(wgs);
+    return wgs->wintw_hdc != NULL;
 }
 
 static void wintw_free_draw_ctx(TermWin *tw)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
-    assert(wgf->wintw_hdc);
-    free_hdc(term_hwnd, wgf->wintw_hdc);
-    wgf->wintw_hdc = NULL;
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
+    assert(wgs->wintw_hdc);
+    free_hdc(term_hwnd, wgs->wintw_hdc);
+    wgs->wintw_hdc = NULL;
 }
 
 /*
  * Set up the colour palette.
  */
-static void init_palette(WinGuiFrontend *wgf)
+static void init_palette(WinGuiSession *wgs)
 {
-    wgf->pal = NULL;
-    wgf->logpal = snew_plus(LOGPALETTE, (OSC4_NCOLOURS - 1) * sizeof(PALETTEENTRY));
-    wgf->logpal->palVersion = 0x300;
-    wgf->logpal->palNumEntries = OSC4_NCOLOURS;
+    wgs->pal = NULL;
+    wgs->logpal = snew_plus(LOGPALETTE, (OSC4_NCOLOURS - 1) * sizeof(PALETTEENTRY));
+    wgs->logpal->palVersion = 0x300;
+    wgs->logpal->palNumEntries = OSC4_NCOLOURS;
     for (unsigned i = 0; i < OSC4_NCOLOURS; i++)
-        wgf->logpal->palPalEntry[i].peFlags = PC_NOCOLLAPSE;
+        wgs->logpal->palPalEntry[i].peFlags = PC_NOCOLLAPSE;
 }
 
 static void wintw_palette_set(TermWin *win, unsigned start,
                               unsigned ncolours, const rgb *colours_in)
 {
-    WinGuiFrontend *wgf = container_of(win, WinGuiFrontend, wintw);
+    WinGuiSession *wgs = container_of(win, WinGuiSession, wintw);
     assert(start <= OSC4_NCOLOURS);
     assert(ncolours <= OSC4_NCOLOURS - start);
 
-    if (wgf->term_palette_init)
+    if (wgs->term_palette_init)
     {
         colours_in -= start;
         start = 0;
         ncolours = OSC4_NCOLOURS;
-        wgf->term_palette_init = false;
+        wgs->term_palette_init = false;
     }
     for (unsigned i = 0; i < ncolours; i++) {
         const rgb *in = &colours_in[i];
-        PALETTEENTRY *out = &wgf->logpal->palPalEntry[i + start];
+        PALETTEENTRY *out = &wgs->logpal->palPalEntry[i + start];
         out->peRed = in->r;
         out->peGreen = in->g;
         out->peBlue = in->b;
-        wgf->colours[i + start] = RGB(in->r, in->g, in->b) ^ wgf->colorref_modifier;
+        wgs->colours[i + start] = RGB(in->r, in->g, in->b) ^ wgs->colorref_modifier;
     }
 
-    if (wgf != wgf_active) {return;}
-    realize_palette(wgf);
+    if (wgs != wgs_active) {return;}
+    realize_palette(wgs);
 
     if (start <= OSC4_COLOUR_bg && OSC4_COLOUR_bg < start + ncolours) {
         /* If Default Background changes, we need to ensure any space between
@@ -5335,8 +5335,8 @@ static void wintw_clip_write(
     TermWin *tw, int clipboard, wchar_t *data, int *attr,
     truecolour *truecolour, int len, bool must_deselect)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
-    Conf *conf = wgf->conf;
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
+    Conf *conf = wgs->conf;
     HGLOBAL clipdata, clipdata2, clipdata3;
     int len2;
     void *lock, *lock2, *lock3;
@@ -5418,7 +5418,7 @@ static void wintw_clip_write(
                     bgcolour = tmpcolour;
                 }
 
-                if (wgf->bold_colours && (attr[i] & ATTR_BOLD)) {
+                if (wgs->bold_colours && (attr[i] & ATTR_BOLD)) {
                     if (fgcolour  <   8)        /* ANSI colours */
                         fgcolour +=   8;
                     else if (fgcolour >= 256)   /* Default colours */
@@ -5480,7 +5480,7 @@ static void wintw_clip_write(
 
             for (i = 0; i < OSC4_NCOLOURS; i++) {
                 if (palette[i] != 0) {
-                    const PALETTEENTRY *pe = &wgf->logpal->palPalEntry[i];
+                    const PALETTEENTRY *pe = &wgs->logpal->palPalEntry[i];
                     put_fmt(rtf, "\\red%d\\green%d\\blue%d;",
                                 pe->peRed, pe->peGreen, pe->peBlue);
                 }
@@ -5559,7 +5559,7 @@ static void wintw_clip_write(
                     bg = tmpref;
                 }
 
-                if (wgf->bold_colours && (attr[tindex] & ATTR_BOLD) && (fgcolour >= 0)) {
+                if (wgs->bold_colours && (attr[tindex] & ATTR_BOLD) && (fgcolour >= 0)) {
                     if (fgcolour  <   8)            /* ANSI colours */
                         fgcolour +=   8;
                     else if (fgcolour >= 256)       /* Default colours */
@@ -5576,7 +5576,7 @@ static void wintw_clip_write(
                 /*
                  * Collect other attributes
                  */
-                if (wgf->bold_font_mode != BOLD_NONE)
+                if (wgs->bold_font_mode != BOLD_NONE)
                     attrBold  = attr[tindex] & ATTR_BOLD;
                 else
                     attrBold  = 0;
@@ -5595,7 +5595,7 @@ static void wintw_clip_write(
                         bgcolour  = -1;             /* No coloring */
 
                     if (fgcolour >= 256) {          /* Default colour */
-                        if (wgf->bold_colours && (fgcolour & 1) && bgcolour == -1)
+                        if (wgs->bold_colours && (fgcolour & 1) && bgcolour == -1)
                             attrBold = ATTR_BOLD;   /* Emphasize text with bold attribute */
 
                         fgcolour  = -1;             /* No coloring */
@@ -5836,7 +5836,7 @@ void modalfatalbox(const char *fmt, ...)
     va_start(ap, fmt);
     message = dupvprintf(fmt, ap);
     va_end(ap);
-    show_mouseptr(wgf_active, true);
+    show_mouseptr(wgs_active, true);
     title = dupprintf("%s Fatal Error", appname);
     MessageBox(frame_hwnd, message, title,
                MB_SYSTEMMODAL | MB_ICONERROR | MB_OK);
@@ -5856,7 +5856,7 @@ void nonfatal(const char *fmt, ...)
     va_start(ap, fmt);
     message = dupvprintf(fmt, ap);
     va_end(ap);
-    show_mouseptr(wgf_active, true);
+    show_mouseptr(wgs_active, true);
     title = dupprintf("%s Error", appname);
     MessageBox(frame_hwnd, message, title, MB_ICONERROR | MB_OK);
     sfree(message);
@@ -5898,7 +5898,7 @@ static void flash_window_timer(void *ctx, unsigned long now)
  */
 static void flash_window(int mode)
 {
-    Conf *conf = wgf_active->conf;
+    Conf *conf = wgs_active->conf;
     int beep_ind = conf_get_int(conf, CONF_beep_ind);
     if ((mode == 0) || (beep_ind == B_IND_DISABLED)) {
         /* stop */
@@ -5947,10 +5947,10 @@ static void flash_window(int mode)
  */
 static void wintw_bell(TermWin *tw, int mode)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
-    if (wgf != wgf_active) {return;}
-    Conf *conf = wgf->conf;
-    Terminal *term = wgf->term;
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
+    if (wgs != wgs_active) {return;}
+    Conf *conf = wgs->conf;
+    Terminal *term = wgs->term;
     if (mode == BELL_DEFAULT) {
         /*
          * For MessageBeep style bells, we want to be careful of
@@ -5975,7 +5975,7 @@ static void wintw_bell(TermWin *tw, int mode)
         if (!p_PlaySound || !p_PlaySound(bell_wavefile->path, NULL,
                          SND_ASYNC | SND_FILENAME)) {
             char *buf, *otherbuf;
-            show_mouseptr(wgf, true);
+            show_mouseptr(wgs, true);
             buf = dupprintf(
                 "Unable to play sound file\n%s\nUsing default sound instead",
                 bell_wavefile->path);
@@ -6016,8 +6016,8 @@ static void wintw_bell(TermWin *tw, int mode)
  */
 static void wintw_set_minimised(TermWin *tw, bool minimised)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
-    if (wgf != wgf_active) {return;}
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
+    if (wgs != wgs_active) {return;}
     if (IsIconic(frame_hwnd)) {
         if (!minimised)
             ShowWindow(frame_hwnd, SW_RESTORE);
@@ -6032,9 +6032,9 @@ static void wintw_set_minimised(TermWin *tw, bool minimised)
  */
 static void wintw_move(TermWin *tw, int x, int y)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
-    if (wgf != wgf_active) {return;}
-    Conf *conf = wgf->conf;
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
+    if (wgs != wgs_active) {return;}
+    Conf *conf = wgs->conf;
     int resize_action = conf_get_int(conf, CONF_resize_action);
     if (resize_action == RESIZE_DISABLED ||
         resize_action == RESIZE_FONT ||
@@ -6050,9 +6050,9 @@ static void wintw_move(TermWin *tw, int x, int y)
  */
 static void wintw_set_zorder(TermWin *tw, bool top)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
-    if (wgf != wgf_active) {return;}
-    if (conf_get_bool(wgf->conf, CONF_alwaysontop))
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
+    if (wgs != wgs_active) {return;}
+    if (conf_get_bool(wgs->conf, CONF_alwaysontop))
         return;                        /* ignore */
     SetWindowPos(frame_hwnd, top ? HWND_TOP : HWND_BOTTOM, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE);
@@ -6063,8 +6063,8 @@ static void wintw_set_zorder(TermWin *tw, bool top)
  */
 static void wintw_refresh(TermWin *tw)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
-    if (wgf != wgf_active) {return;}
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
+    if (wgs != wgs_active) {return;}
     InvalidateRect(term_hwnd, NULL, true);
 }
 
@@ -6074,8 +6074,8 @@ static void wintw_refresh(TermWin *tw)
  */
 static void wintw_set_maximised(TermWin *tw, bool maximised)
 {
-    WinGuiFrontend *wgf = container_of(tw, WinGuiFrontend, wintw);
-    if (wgf != wgf_active) {return;}
+    WinGuiSession *wgs = container_of(tw, WinGuiSession, wintw);
+    if (wgs != wgs_active) {return;}
     if (IsZoomed(frame_hwnd)) {
         if (!maximised)
             ShowWindow(frame_hwnd, SW_RESTORE);
@@ -6130,7 +6130,7 @@ static bool get_fullscreen_rect(RECT * ss)
  */
 static void make_full_screen()
 {
-    Conf *conf = wgf_active->conf;
+    Conf *conf = wgs_active->conf;
     DWORD style;
         RECT ss;
 
@@ -6155,7 +6155,7 @@ static void make_full_screen()
 
     /* We may have changed size as a result */
 
-    reset_window(wgf_active, 0);
+    reset_window(wgs_active, 0);
 
     /* Tick the menu item in the System and context menus. */
     check_menu_item(IDM_FULLSCREEN, MF_CHECKED);
@@ -6166,7 +6166,7 @@ static void make_full_screen()
  */
 static void clear_full_screen()
 {
-    Conf *conf = wgf_active->conf;
+    Conf *conf = wgs_active->conf;
     DWORD oldstyle, style;
 
     /* Reinstate the window furniture. */
@@ -6209,15 +6209,15 @@ static void flip_full_screen()
 static size_t win_seat_output(Seat *seat, SeatOutputType type,
                               const void *data, size_t len)
 {
-    WinGuiFrontend *wgf = container_of(seat, WinGuiFrontend, seat);
-    Terminal *term = wgf->term;
+    WinGuiSession *wgs = container_of(seat, WinGuiSession, seat);
+    Terminal *term = wgs->term;
     if (len > 0) {
-        if (wgf == wgf_active) {
+        if (wgs == wgs_active) {
             if (term->curs.y < term->disptop+term->rows) {
-                wgf->find.data_arrived = true;
+                wgs->find.data_arrived = true;
             }
         } else {
-        tab_bar_set_tab_notified(wgf->tab_index);
+        tab_bar_set_tab_notified(wgs->tab_index);
     }
     }
     return term_data(term, data, len);
@@ -6225,9 +6225,9 @@ static size_t win_seat_output(Seat *seat, SeatOutputType type,
 
 static void wintw_unthrottle(TermWin *win, size_t bufsize)
 {
-    WinGuiFrontend *wgf = container_of(win, WinGuiFrontend, wintw);
-    if (wgf->backend)
-        backend_unthrottle(wgf->backend, bufsize);
+    WinGuiSession *wgs = container_of(win, WinGuiSession, wintw);
+    if (wgs->backend)
+        backend_unthrottle(wgs->backend, bufsize);
 }
 
 static bool win_seat_eof(Seat *seat)
@@ -6237,10 +6237,10 @@ static bool win_seat_eof(Seat *seat)
 
 static SeatPromptResult win_seat_get_userpass_input(Seat *seat, prompts_t *p)
 {
-    WinGuiFrontend *wgf = container_of(seat, WinGuiFrontend, seat);
-    Terminal *term = wgf->term;
+    WinGuiSession *wgs = container_of(seat, WinGuiSession, seat);
+    Terminal *term = wgs->term;
     SeatPromptResult spr;
-    spr = cmdline_get_passwd_input(p, &wgf->cmdline_get_passwd_state, true);
+    spr = cmdline_get_passwd_input(p, &wgs->cmdline_get_passwd_state, true);
     if (spr.kind == SPRK_INCOMPLETE)
         spr = term_get_userpass_input(term, p);
     return spr;
@@ -6248,8 +6248,8 @@ static SeatPromptResult win_seat_get_userpass_input(Seat *seat, prompts_t *p)
 
 static void win_seat_set_trust_status(Seat *seat, bool trusted)
 {
-    WinGuiFrontend *wgf = container_of(seat, WinGuiFrontend, seat);
-    Terminal *term = wgf->term;
+    WinGuiSession *wgs = container_of(seat, WinGuiSession, seat);
+    Terminal *term = wgs->term;
     term_set_trust_status(term, trusted);
 }
 
@@ -6260,8 +6260,8 @@ static bool win_seat_can_set_trust_status(Seat *seat)
 
 static bool win_seat_get_cursor_position(Seat *seat, int *x, int *y)
 {
-    WinGuiFrontend *wgf = container_of(seat, WinGuiFrontend, seat);
-    Terminal *term = wgf->term;
+    WinGuiSession *wgs = container_of(seat, WinGuiSession, seat);
+    Terminal *term = wgs->term;
     term_get_cursor_position(term, x, y);
     return true;
 }

@@ -96,109 +96,109 @@ static void term_palette_init_fix(Terminal *term)
     }
 }
 
-static WinGuiFrontend *create_frontend(Conf *conf, const char *session_name) {
-    WinGuiFrontend *wgf = (WinGuiFrontend *)smalloc(sizeof(WinGuiFrontend));
+static WinGuiSession *create_frontend(Conf *conf, const char *session_name) {
+    WinGuiSession *wgs = (WinGuiSession *)smalloc(sizeof(WinGuiSession));
 
-    memset(wgf, 0, sizeof(*wgf));
-    wgf->conf = conf;
+    memset(wgs, 0, sizeof(*wgs));
+    wgs->conf = conf;
 
-    wgf->caret_x = -1;
-    wgf->caret_y = -1;
-    wgf->specials = NULL;
-    wgf->specials_menu = NULL;
-    wgf->n_specials = 0;
-    wgf->tried_pal = false;
-    wgf->colorref_modifier = 0;
-    wgf->send_raw_mouse = false;
-    wgf->wheel_accumulator = 0;
-    wgf->pointer_indicates_raw_mouse = false;
-    wgf->busy_status = BUSY_NOT;
-    wgf->compose_state = 0;
-    wgf->wintw.vt = &windows_termwin_vt;
-    wgf->wintw_hdc = NULL;
-    wgf->trust_icon = INVALID_HANDLE_VALUE,
-    wgf->eventlogstuff.ninitial = 0;
-    wgf->eventlogstuff.ncircular = 0;
-    wgf->eventlogstuff.circular_first = 0;
-    wgf->seat.vt = &win_seat_vt;
-    wgf->logpolicy.vt = &win_gui_logpolicy_vt;
-    wgf->need_backend_resize = false;
-    wgf->wnd_proc.ignore_clip = false;
-    wgf->syschar.pending_surrogate = 0;
-    wgf->translate_key.alt_sum = 0;
-    wgf->translate_key.compose_char = 0;
-    wgf->translate_key.compose_keycode = 0;
+    wgs->caret_x = -1;
+    wgs->caret_y = -1;
+    wgs->specials = NULL;
+    wgs->specials_menu = NULL;
+    wgs->n_specials = 0;
+    wgs->tried_pal = false;
+    wgs->colorref_modifier = 0;
+    wgs->send_raw_mouse = false;
+    wgs->wheel_accumulator = 0;
+    wgs->pointer_indicates_raw_mouse = false;
+    wgs->busy_status = BUSY_NOT;
+    wgs->compose_state = 0;
+    wgs->wintw.vt = &windows_termwin_vt;
+    wgs->wintw_hdc = NULL;
+    wgs->trust_icon = INVALID_HANDLE_VALUE,
+    wgs->eventlogstuff.ninitial = 0;
+    wgs->eventlogstuff.ncircular = 0;
+    wgs->eventlogstuff.circular_first = 0;
+    wgs->seat.vt = &win_seat_vt;
+    wgs->logpolicy.vt = &win_gui_logpolicy_vt;
+    wgs->need_backend_resize = false;
+    wgs->wnd_proc.ignore_clip = false;
+    wgs->syschar.pending_surrogate = 0;
+    wgs->translate_key.alt_sum = 0;
+    wgs->translate_key.compose_char = 0;
+    wgs->translate_key.compose_keycode = 0;
 
-    wgf->window_name = dup_mb_to_wc(DEFAULT_CODEPAGE, 0, appname);
-    wgf->icon_name = dup_mb_to_wc(DEFAULT_CODEPAGE, 0, appname);
+    wgs->window_name = dup_mb_to_wc(DEFAULT_CODEPAGE, 0, appname);
+    wgs->icon_name = dup_mb_to_wc(DEFAULT_CODEPAGE, 0, appname);
 
-    memset(&wgf->ucsdata, 0, sizeof(wgf->ucsdata));
-    conf_cache_data(wgf);
-    init_fonts(wgf, 0,0);
-    init_palette(wgf);
+    memset(&wgs->ucsdata, 0, sizeof(wgs->ucsdata));
+    conf_cache_data(wgs);
+    init_fonts(wgs, 0,0);
+    init_palette(wgs);
 
-    wgf->term_palette_init = true;
-    Terminal *term = term_init(conf, &wgf->ucsdata, &wgf->wintw);
+    wgs->term_palette_init = true;
+    Terminal *term = term_init(conf, &wgs->ucsdata, &wgs->wintw);
     term->ldisc = NULL; // missing from term_init
     term->basic_erase_char.attr |= ATTR_ERASE;
     term->erase_char.attr |= ATTR_ERASE;
     term_palette_init_fix(term);
-    wgf->term = term;
+    wgs->term = term;
     setup_clipboards(term, conf);
-    wgf->logctx = log_init(&wgf->logpolicy, conf);
-    term_provide_logctx(term, wgf->logctx);
+    wgs->logctx = log_init(&wgs->logpolicy, conf);
+    term_provide_logctx(term, wgs->logctx);
     term_size(term, conf_get_int(conf, CONF_height),
               conf_get_int(conf, CONF_width),
               conf_get_int(conf, CONF_savelines));
 
     char *bits;
-    int size = (wgf->font_width + 15) / 16 * 2 * wgf->font_height;
+    int size = (wgs->font_width + 15) / 16 * 2 * wgs->font_height;
     bits = snewn(size, char);
     memset(bits, 0, size);
-    wgf->caretbm = CreateBitmap(wgf->font_width, wgf->font_height, 1, 1, bits);
+    wgs->caretbm = CreateBitmap(wgs->font_width, wgs->font_height, 1, 1, bits);
     sfree(bits);
 
-    wgf->session_id = session_counter++;
-    wgf->session_name = session_name;
-    wgf->remote_closed = true;
-    wgf->delete_session = false;
+    wgs->session_id = session_counter++;
+    wgs->session_name = session_name;
+    wgs->remote_closed = true;
+    wgs->delete_session = false;
 
-    wgf->cursor_visible = true;
-    wgf->cursor_forced_visible = false;
+    wgs->cursor_visible = true;
+    wgs->cursor_forced_visible = false;
 
-    return wgf;
+    return wgs;
 }
 
-static void destroy_frontend(WinGuiFrontend *wgf) {
-    DeleteObject(wgf->caretbm);
+static void destroy_frontend(WinGuiSession *wgs) {
+    DeleteObject(wgs->caretbm);
 
-    sfree(wgf->find.pattern);
+    sfree(wgs->find.pattern);
 
-    log_free(wgf->logctx);
-    term_free(wgf->term);
+    log_free(wgs->logctx);
+    term_free(wgs->term);
 
-    sfree(wgf->logpal);
-    if (wgf->pal)
-        DeleteObject(wgf->pal);
-    deinit_fonts(wgf);
+    sfree(wgs->logpal);
+    if (wgs->pal)
+        DeleteObject(wgs->pal);
+    deinit_fonts(wgs);
 
-    if (conf_get_int(wgf->conf, CONF_protocol) == PROT_SSH) {
+    if (conf_get_int(wgs->conf, CONF_protocol) == PROT_SSH) {
         random_save_seed();
     }
-    conf_free(wgf->conf);
+    conf_free(wgs->conf);
 
-    sfree((char *)wgf->session_name);
-    sfree(wgf);
+    sfree((char *)wgs->session_name);
+    sfree(wgs);
 }
 
-static void set_title_from_session(WinGuiFrontend *wgf) {
-    if (conf_get_bool(wgf->conf, CONF_win_name_always) || !IsIconic(frame_hwnd))
-        SetWindowTextW(frame_hwnd, wgf->window_name);
+static void set_title_from_session(WinGuiSession *wgs) {
+    if (conf_get_bool(wgs->conf, CONF_win_name_always) || !IsIconic(frame_hwnd))
+        SetWindowTextW(frame_hwnd, wgs->window_name);
 }
 
-static void set_icon_title_from_session(WinGuiFrontend *wgf) {
-    if (!conf_get_bool(wgf->conf, CONF_win_name_always) && IsIconic(frame_hwnd))
-        SetWindowTextW(frame_hwnd, wgf->icon_name);
+static void set_icon_title_from_session(WinGuiSession *wgs) {
+    if (!conf_get_bool(wgs->conf, CONF_win_name_always) && IsIconic(frame_hwnd))
+        SetWindowTextW(frame_hwnd, wgs->icon_name);
 }
 
 /* Calling of wintw_set_scrollbar() is connected to drawing in term_update() in terminal.c
@@ -286,68 +286,68 @@ static bool set_frame_style(Conf *conf) {
     return false;
 }
 
-static void realize_palette(WinGuiFrontend *wgf) {
-    Conf *conf = wgf->conf;
+static void realize_palette(WinGuiSession *wgs) {
+    Conf *conf = wgs->conf;
     bool got_new_palette = false;
 
-    if (!wgf->tried_pal && conf_get_bool(conf, CONF_try_palette)) {
+    if (!wgs->tried_pal && conf_get_bool(conf, CONF_try_palette)) {
         HDC hdc = GetDC(term_hwnd);
         if (GetDeviceCaps(hdc, RASTERCAPS) & RC_PALETTE) {
-            wgf->pal = CreatePalette(wgf->logpal);
-            if (wgf->pal) {
-                SelectPalette(hdc, wgf->pal, false);
+            wgs->pal = CreatePalette(wgs->logpal);
+            if (wgs->pal) {
+                SelectPalette(hdc, wgs->pal, false);
                 RealizePalette(hdc);
                 SelectPalette(hdc, GetStockObject(DEFAULT_PALETTE), false);
 
                 /* Convert all RGB() values in colours[] into PALETTERGB(),
                  * and ensure we stick to that later */
-                wgf->colorref_modifier = PALETTERGB(0, 0, 0) ^ RGB(0, 0, 0);
+                wgs->colorref_modifier = PALETTERGB(0, 0, 0) ^ RGB(0, 0, 0);
                 for (unsigned i = 0; i < OSC4_NCOLOURS; i++)
-                    wgf->colours[i] ^= wgf->colorref_modifier;
+                    wgs->colours[i] ^= wgs->colorref_modifier;
 
                 /* Inhibit the SetPaletteEntries call below */
                 got_new_palette = true;
             }
         }
         ReleaseDC(term_hwnd, hdc);
-        wgf->tried_pal = true;
+        wgs->tried_pal = true;
     }
 
-    if (wgf->pal && !got_new_palette) {
+    if (wgs->pal && !got_new_palette) {
         /* We already had a palette, so replace the changed colours in the
          * existing one. */
-        SetPaletteEntries(wgf->pal, 0, wgf->logpal->palNumEntries, wgf->logpal->palPalEntry);
+        SetPaletteEntries(wgs->pal, 0, wgs->logpal->palNumEntries, wgs->logpal->palPalEntry);
 
-        HDC hdc = make_hdc(wgf);
-        UnrealizeObject(wgf->pal);
+        HDC hdc = make_hdc(wgs);
+        UnrealizeObject(wgs->pal);
         RealizePalette(hdc);
         free_hdc(term_hwnd, hdc);
     }
 }
 
-static void activate_session(WinGuiFrontend *wgf) {
-    tab_bar_clear_tab_notified(wgf->tab_index);
-    tab_bar_select_tab(wgf->tab_index);
-    wgf_active = wgf;
-    wgf->find.update_finddlg_pending = true;
-    realize_palette(wgf);
-    int resize_action = conf_get_int(wgf->conf, CONF_resize_action);
-    bool was_zoomed = wgf->resize_either.was_zoomed;
-    if (wgf->font_dpi != dpi_info.y) {
-        deinit_fonts(wgf);
-        init_fonts(wgf, 0, 0);
+static void activate_session(WinGuiSession *wgs) {
+    tab_bar_clear_tab_notified(wgs->tab_index);
+    tab_bar_select_tab(wgs->tab_index);
+    wgs_active = wgs;
+    wgs->find.update_finddlg_pending = true;
+    realize_palette(wgs);
+    int resize_action = conf_get_int(wgs->conf, CONF_resize_action);
+    bool was_zoomed = wgs->resize_either.was_zoomed;
+    if (wgs->font_dpi != dpi_info.y) {
+        deinit_fonts(wgs);
+        init_fonts(wgs, 0, 0);
     }
 
     if (IsZoomed(frame_hwnd)) {
         if (!was_zoomed) {
-            wgf->resize_either.was_zoomed = true;
-            wgf->resize_either.font_width = wgf->font_width;
-            wgf->resize_either.font_height = wgf->font_height;
+            wgs->resize_either.was_zoomed = true;
+            wgs->resize_either.font_width = wgs->font_width;
+            wgs->resize_either.font_height = wgs->font_height;
         }
         if (resize_action == RESIZE_DISABLED) {
             ShowWindow(frame_hwnd, SW_RESTORE);
             force_normal(frame_hwnd);
-            reset_window(wgf, -1);
+            reset_window(wgs, -1);
         } else {
             if (resize_action == RESIZE_EITHER && !was_zoomed) {
                 WINDOWPLACEMENT wp;
@@ -355,36 +355,36 @@ static void activate_session(WinGuiFrontend *wgf) {
                 GetWindowPlacement(frame_hwnd, &wp);
                 int width = wp.rcNormalPosition.right-wp.rcNormalPosition.left-extra_width+tab_bar_get_extra_width();
                 int height = wp.rcNormalPosition.bottom-wp.rcNormalPosition.top-extra_height+tab_bar_get_extra_height();
-                wm_size_resize_term(wgf, MAKELPARAM(width, height), false);
+                wm_size_resize_term(wgs, MAKELPARAM(width, height), false);
             }
-            reset_window(wgf, 0);
+            reset_window(wgs, 0);
             InvalidateRect(term_hwnd, NULL, true);
         }
     } else {
-        wgf->resize_either.was_zoomed = false;
+        wgs->resize_either.was_zoomed = false;
         if (resize_action == RESIZE_DISABLED) {
-            reset_window(wgf, 1);
+            reset_window(wgs, 1);
         } else if (resize_action == RESIZE_FONT) {
-            reset_window(wgf, 0);
+            reset_window(wgs, 0);
             InvalidateRect(term_hwnd, NULL, true);
         } else {
             if (resize_action == RESIZE_EITHER && was_zoomed) {
-                deinit_fonts(wgf);
-                init_fonts(wgf, wgf->resize_either.font_width, wgf->resize_either.font_height);
+                deinit_fonts(wgs);
+                init_fonts(wgs, wgs->resize_either.font_width, wgs->resize_either.font_height);
             }
             RECT r;
             GetClientRect(frame_hwnd, &r);
-            wm_size_resize_term(wgf, MAKELPARAM(r.right-r.left, r.bottom-r.top), true);
-            reset_window(wgf, 1);
+            wm_size_resize_term(wgs, MAKELPARAM(r.right-r.left, r.bottom-r.top), true);
+            reset_window(wgs, 1);
         }
     }
-    set_frame_style(wgf->conf);
-    set_title_from_session(wgf);
-    set_icon_title_from_session(wgf);
-    update_sbar(wgf->term);
-    update_mouse_pointer(wgf);
-    reseteventlog(&wgf->eventlogstuff);
-    update_finddlg(wgf);
+    set_frame_style(wgs->conf);
+    set_title_from_session(wgs);
+    set_icon_title_from_session(wgs);
+    update_sbar(wgs->term);
+    update_mouse_pointer(wgs);
+    reseteventlog(&wgs->eventlogstuff);
+    update_finddlg(wgs);
 }
 
 static char *create_tab_title(int id, const char *session_name) {
@@ -402,126 +402,126 @@ static void add_session(Conf *conf, const char *session_name, int index) {
         session_name = dupstr(conf_get_str(conf, CONF_host));
     }
     add_session_tab(conf_get_int(conf, CONF_protocol), session_name, index);
-    WinGuiFrontend *wgf = create_frontend(conf, session_name);
-    pointer_array_insert(index, wgf);
-    activate_session(wgf);
-    start_backend(wgf);
+    WinGuiSession *wgs = create_frontend(conf, session_name);
+    pointer_array_insert(index, wgs);
+    activate_session(wgs);
+    start_backend(wgs);
 }
 
-static void delete_session(WinGuiFrontend *wgf) {
-    int deleted_index = wgf->tab_index;
-    int index = wgf_active->tab_index;
+static void delete_session(WinGuiSession *wgs) {
+    int deleted_index = wgs->tab_index;
+    int index = wgs_active->tab_index;
     if (pointer_array_size() > 1 && index == deleted_index) {
         if (index+1 == pointer_array_size()) {
             index--;
         } else {
             index++;
         }
-        activate_session((WinGuiFrontend *)pointer_array_get(index));
+        activate_session((WinGuiSession *)pointer_array_get(index));
     }
     tab_bar_remove_tab(deleted_index);
     pointer_array_remove(deleted_index);
     if (pointer_array_size() == 0) {
         SetFocus(NULL);
     }
-    destroy_frontend(wgf);
+    destroy_frontend(wgs);
     if (pointer_array_size() == 0) {
-        wgf_active = NULL;
+        wgs_active = NULL;
         DestroyWindow(frame_hwnd);
     }
 }
 
-static void show_finddlg(WinGuiFrontend *wgf) {
+static void show_finddlg(WinGuiSession *wgs) {
     const int default_pattern_buffer_len = 16;
-    if (!wgf->find.pattern) {
-        wgf->find.pattern = snewn(default_pattern_buffer_len, wchar_t);
-        wgf->find.pattern_buffer_len = default_pattern_buffer_len;
-        wgf->find.pattern_len = 0;
-        wgf->find.pattern[0] = 0;
+    if (!wgs->find.pattern) {
+        wgs->find.pattern = snewn(default_pattern_buffer_len, wchar_t);
+        wgs->find.pattern_buffer_len = default_pattern_buffer_len;
+        wgs->find.pattern_len = 0;
+        wgs->find.pattern[0] = 0;
     }
-    finddlg_create(wgf->find.pattern, true, wgf->find.ignore_case, wgf->find.whole_word);
+    finddlg_create(wgs->find.pattern, true, wgs->find.ignore_case, wgs->find.whole_word);
 }
 
-static void update_finddlg(WinGuiFrontend *wgf) {
-    if (wgf->find.pattern) {
-        finddlg_create(wgf->find.pattern, false, wgf->find.ignore_case, wgf->find.whole_word);
-        if (wgf->find.pattern_len > 1) {
-            find_match_mask_alloc(&find_match_mask, wgf->term->rows, wgf->term->cols);
-            find_display(wgf->term, wgf->find.pattern, wgf->find.pattern_len, wgf->find.ignore_case, wgf->find.whole_word, &find_match_mask);
+static void update_finddlg(WinGuiSession *wgs) {
+    if (wgs->find.pattern) {
+        finddlg_create(wgs->find.pattern, false, wgs->find.ignore_case, wgs->find.whole_word);
+        if (wgs->find.pattern_len > 1) {
+            find_match_mask_alloc(&find_match_mask, wgs->term->rows, wgs->term->cols);
+            find_display(wgs->term, wgs->find.pattern, wgs->find.pattern_len, wgs->find.ignore_case, wgs->find.whole_word, &find_match_mask);
         }
     } else {
         find_match_mask_free(&find_match_mask);
         finddlg_destroy();
     }
-    wgf->find.update_finddlg_pending = false;
+    wgs->find.update_finddlg_pending = false;
 }
 
-static void update_find_match_mask(WinGuiFrontend *wgf)
+static void update_find_match_mask(WinGuiSession *wgs)
 {
     bool dirty = find_match_mask.dirty;
-    find_match_mask_alloc(&find_match_mask, wgf->term->rows, wgf->term->cols);
-    find_display(wgf->term, wgf->find.pattern, wgf->find.pattern_len, wgf->find.ignore_case, wgf->find.whole_word, &find_match_mask);
+    find_match_mask_alloc(&find_match_mask, wgs->term->rows, wgs->term->cols);
+    find_display(wgs->term, wgs->find.pattern, wgs->find.pattern_len, wgs->find.ignore_case, wgs->find.whole_word, &find_match_mask);
     if (find_match_mask.dirty || dirty) {
-        term_invalidate(wgf->term);
+        term_invalidate(wgs->term);
     }
 }
 
-static void drop_find_match_mask(WinGuiFrontend *wgf) {
+static void drop_find_match_mask(WinGuiSession *wgs) {
     bool dirty = find_match_mask.dirty;
     find_match_mask_free(&find_match_mask);
     if (dirty) {
-        term_invalidate(wgf->term);
+        term_invalidate(wgs->term);
     }
 }
 
-static void update_find_pattern(WinGuiFrontend *wgf, int l) {
+static void update_find_pattern(WinGuiSession *wgs, int l) {
     int buffer_len = l+1;
-    if (wgf->find.pattern_buffer_len < buffer_len) {
-        sfree(wgf->find.pattern);
-        wgf->find.pattern = snewn(buffer_len, wchar_t);
-        wgf->find.pattern_buffer_len = buffer_len;
+    if (wgs->find.pattern_buffer_len < buffer_len) {
+        sfree(wgs->find.pattern);
+        wgs->find.pattern = snewn(buffer_len, wchar_t);
+        wgs->find.pattern_buffer_len = buffer_len;
     }
-    wgf->find.pattern_len = finddlg_get_text(wgf->find.pattern, wgf->find.pattern_buffer_len);
-    assert(wgf->find.pattern_len == l);
+    wgs->find.pattern_len = finddlg_get_text(wgs->find.pattern, wgs->find.pattern_buffer_len);
+    assert(wgs->find.pattern_len == l);
 }
 
-static void scroll_to_row(WinGuiFrontend *wgf, int row) {
-    term_scroll(wgf->term, 0, row);
+static void scroll_to_row(WinGuiSession *wgs, int row) {
+    term_scroll(wgs->term, 0, row);
     find_match_mask_clear(&find_match_mask);
-    find_display(wgf->term, wgf->find.pattern, wgf->find.pattern_len, wgf->find.ignore_case, wgf->find.whole_word, &find_match_mask);
-    term_update(wgf->term);
+    find_display(wgs->term, wgs->find.pattern, wgs->find.pattern_len, wgs->find.ignore_case, wgs->find.whole_word, &find_match_mask);
+    term_update(wgs->term);
 }
 
 static void handle_finddlg_notify(LPARAM lParam) {
     switch (((NMHDR *)lParam)->code) {
       case FINDDLG_EDIT_CHANGED: {
         int l = finddlg_get_text(NULL, 0);
-        update_find_pattern(wgf_active, l);
+        update_find_pattern(wgs_active, l);
         if (l > 1) {
-            update_find_match_mask(wgf_active);
+            update_find_match_mask(wgs_active);
         } else {
-            drop_find_match_mask(wgf_active);
+            drop_find_match_mask(wgs_active);
         }
         break;
       }
       case FINDDLG_IGNORE_CASE: {
-        wgf_active->find.ignore_case = finddlg_get_ignore_case();
+        wgs_active->find.ignore_case = finddlg_get_ignore_case();
         if (find_match_mask.cells) {
-            update_find_match_mask(wgf_active);
+            update_find_match_mask(wgs_active);
         }
         break;
       }
       case FINDDLG_WHOLE_WORD: {
-        wgf_active->find.whole_word = finddlg_get_whole_word();
+        wgs_active->find.whole_word = finddlg_get_whole_word();
         if (find_match_mask.cells) {
-            update_find_match_mask(wgf_active);
+            update_find_match_mask(wgs_active);
         }
         break;
       }
       case FINDDLG_EDIT_ENTER: {
-        if (wgf_active->find.pattern_len < 2) {
-            if (wgf_active->find.pattern_len > 0) {
-                update_find_match_mask(wgf_active);
+        if (wgs_active->find.pattern_len < 2) {
+            if (wgs_active->find.pattern_len > 0) {
+                update_find_match_mask(wgs_active);
             }
             break;
         } // if pattern_len >= 2, no break, fall through to FINDDLG_UP
@@ -529,10 +529,10 @@ static void handle_finddlg_notify(LPARAM lParam) {
       case FINDDLG_UP: {
         if (find_match_mask.cells) {
             int row;
-            assert(wgf_active->find.pattern_len > 0);
-            if (find_above_display(wgf_active->term, wgf_active->find.pattern, wgf_active->find.pattern_len, wgf_active->find.ignore_case, wgf_active->find.whole_word, &row)) {
-                row -= wgf_active->term->rows/2;
-                scroll_to_row(wgf_active, row);
+            assert(wgs_active->find.pattern_len > 0);
+            if (find_above_display(wgs_active->term, wgs_active->find.pattern, wgs_active->find.pattern_len, wgs_active->find.ignore_case, wgs_active->find.whole_word, &row)) {
+                row -= wgs_active->term->rows/2;
+                scroll_to_row(wgs_active, row);
             }
         }
         break;
@@ -540,23 +540,23 @@ static void handle_finddlg_notify(LPARAM lParam) {
       case FINDDLG_DOWN: {
         if (find_match_mask.cells) {
             int row;
-            assert(wgf_active->find.pattern_len > 0);
-            if (find_below_display(wgf_active->term, wgf_active->find.pattern, wgf_active->find.pattern_len, wgf_active->find.ignore_case, wgf_active->find.whole_word, &row)) {
-                row -= wgf_active->term->rows/2;
-                scroll_to_row(wgf_active, row);
+            assert(wgs_active->find.pattern_len > 0);
+            if (find_below_display(wgs_active->term, wgs_active->find.pattern, wgs_active->find.pattern_len, wgs_active->find.ignore_case, wgs_active->find.whole_word, &row)) {
+                row -= wgs_active->term->rows/2;
+                scroll_to_row(wgs_active, row);
             }
         }
         break;
       }
       case FINDDLG_CLOSE: {
         finddlg_destroy();
-        sfree(wgf_active->find.pattern);
-        wgf_active->find.pattern = NULL;
-        wgf_active->find.pattern_buffer_len = 0;
-        wgf_active->find.pattern_len = 0;
-        wgf_active->find.ignore_case = false;
-        wgf_active->find.whole_word = false;
-        drop_find_match_mask(wgf_active);
+        sfree(wgs_active->find.pattern);
+        wgs_active->find.pattern = NULL;
+        wgs_active->find.pattern_buffer_len = 0;
+        wgs_active->find.pattern_len = 0;
+        wgs_active->find.ignore_case = false;
+        wgs_active->find.whole_word = false;
+        drop_find_match_mask(wgs_active);
         break;
       }
     }
@@ -571,7 +571,7 @@ static void handle_wm_notify(LPARAM lParam) {
     int index = tab_bar_get_current_tab();
     switch (nmhdr->_hdr.code) {
       case TCN_SELCHANGE: {
-        activate_session((WinGuiFrontend *)pointer_array_get(index));
+        activate_session((WinGuiSession *)pointer_array_get(index));
         break;
       }
       case TCN_TABEXCHANGE: {
@@ -579,17 +579,17 @@ static void handle_wm_notify(LPARAM lParam) {
         break;
       }
       case TCN_TABDELETE: {
-        WinGuiFrontend *wgf = (WinGuiFrontend *)pointer_array_get(nmhdr->_tabOrigin);
-        if (!wgf->remote_closed && conf_get_bool(wgf->conf, CONF_warn_on_close)) {
+        WinGuiSession *wgs = (WinGuiSession *)pointer_array_get(nmhdr->_tabOrigin);
+        if (!wgs->remote_closed && conf_get_bool(wgs->conf, CONF_warn_on_close)) {
             if (index != nmhdr->_tabOrigin) {
                 index = nmhdr->_tabOrigin;
-                activate_session(wgf);
+                activate_session(wgs);
             }
-            show_mouseptr(wgf, true);
+            show_mouseptr(wgs, true);
             char *title, *msg, *additional = NULL;
             title = dupprintf("%s Session Close Confirmation", appname);
-            if (wgf->backend && wgf->backend->vt->close_warn_text) {
-                additional = wgf->backend->vt->close_warn_text(wgf->backend);
+            if (wgs->backend && wgs->backend->vt->close_warn_text) {
+                additional = wgs->backend->vt->close_warn_text(wgs->backend);
             }
             msg = dupprintf("Are you sure you want to close this session?%s%s",
                             additional ? "\n" : "",
@@ -602,20 +602,20 @@ static void handle_wm_notify(LPARAM lParam) {
                 break;
             }
         }
-        if (wgf->backend) {
-            stop_backend(wgf);
+        if (wgs->backend) {
+            stop_backend(wgs);
         }
-        if (wgf->remote_closed) {
-            delete_callbacks_for_context(wgf);
+        if (wgs->remote_closed) {
+            delete_callbacks_for_context(wgs);
         }
-        delete_session(wgf);
+        delete_session(wgs);
         break;
       }
       case NM_RCLICK:
       {
         POINT cursorpos;
 
-        show_mouseptr(wgf_active, true);
+        show_mouseptr(wgs_active, true);
         GetCursorPos(&cursorpos);
         TrackPopupMenu(popup_menus[SYSMENU].menu,
                        TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON,
@@ -628,7 +628,7 @@ static void handle_wm_notify(LPARAM lParam) {
 
 static void handle_wm_initmenu(WPARAM wParam) {
     HMENU menu = (HMENU)wParam;
-    int resize_action = conf_get_int(wgf_active->conf, CONF_resize_action);
+    int resize_action = conf_get_int(wgs_active->conf, CONF_resize_action);
     EnableMenuItem(menu, IDM_FULLSCREEN, MF_BYCOMMAND |
                    (resize_action == RESIZE_DISABLED ? MF_GRAYED : MF_ENABLED));
     /*
@@ -639,7 +639,7 @@ static void handle_wm_initmenu(WPARAM wParam) {
      * whether it was us who removed it or not!)
      */
     DeleteMenu(menu, IDM_RESTART, MF_BYCOMMAND);
-    if (wgf_active->remote_closed) {
+    if (wgs_active->remote_closed) {
         /*
          * Show the Restart Session menu item. Do a precautionary
          * delete first to ensure we never end up with more than one.
@@ -655,16 +655,16 @@ static void handle_wm_initmenu(WPARAM wParam) {
             break;
         }
     }
-    if (wgf_active->specials_menu) {
+    if (wgs_active->specials_menu) {
         InsertMenu(menu, IDM_SHOWLOG,
                    MF_BYCOMMAND | MF_POPUP | MF_ENABLED,
-                   (UINT_PTR) wgf_active->specials_menu, "S&pecial Command");
+                   (UINT_PTR) wgs_active->specials_menu, "S&pecial Command");
         InsertMenu(menu, IDM_SHOWLOG,
                    MF_BYCOMMAND | MF_SEPARATOR, IDM_SPECIALSEP, 0);
     }
 
     DeleteMenu(menu, IDM_DUPSESS_SFTP, MF_BYCOMMAND);
-    if (conf_get_int(wgf_active->conf, CONF_protocol) == PROT_SSH) {
+    if (conf_get_int(wgs_active->conf, CONF_protocol) == PROT_SSH) {
         InsertMenu(menu, IDM_DUPSESS_NEW, MF_BYCOMMAND | MF_ENABLED,
                    IDM_DUPSESS_SFTP, "Duplicate as SFTP");
     }
