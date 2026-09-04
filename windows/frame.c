@@ -114,8 +114,9 @@ static WinGuiSession *create_frontend(Conf *conf, const char *session_name) {
     wgs->pointer_indicates_raw_mouse = false;
     wgs->busy_status = BUSY_NOT;
     wgs->compose_state = 0;
-    wgs->wintw.vt = &windows_termwin_vt;
+    wgs->termwin.vt = &windows_termwin_vt;
     wgs->wintw_hdc = NULL;
+    wgs->term_hwnd = term_hwnd;
     wgs->trust_icon = INVALID_HANDLE_VALUE,
     wgs->eventlogstuff.ninitial = 0;
     wgs->eventlogstuff.ncircular = 0;
@@ -138,7 +139,7 @@ static WinGuiSession *create_frontend(Conf *conf, const char *session_name) {
     init_palette(wgs);
 
     wgs->term_palette_init = true;
-    Terminal *term = term_init(conf, &wgs->ucsdata, &wgs->wintw);
+    Terminal *term = term_init(conf, &wgs->ucsdata, &wgs->termwin);
     term->ldisc = NULL; // missing from term_init
     term->basic_erase_char.attr |= ATTR_ERASE;
     term->erase_char.attr |= ATTR_ERASE;
@@ -291,7 +292,7 @@ static void realize_palette(WinGuiSession *wgs) {
     bool got_new_palette = false;
 
     if (!wgs->tried_pal && conf_get_bool(conf, CONF_try_palette)) {
-        HDC hdc = GetDC(term_hwnd);
+        HDC hdc = GetDC(wgs->term_hwnd);
         if (GetDeviceCaps(hdc, RASTERCAPS) & RC_PALETTE) {
             wgs->pal = CreatePalette(wgs->logpal);
             if (wgs->pal) {
@@ -309,7 +310,7 @@ static void realize_palette(WinGuiSession *wgs) {
                 got_new_palette = true;
             }
         }
-        ReleaseDC(term_hwnd, hdc);
+        ReleaseDC(wgs->term_hwnd, hdc);
         wgs->tried_pal = true;
     }
 
@@ -321,7 +322,7 @@ static void realize_palette(WinGuiSession *wgs) {
         HDC hdc = make_hdc(wgs);
         UnrealizeObject(wgs->pal);
         RealizePalette(hdc);
-        free_hdc(term_hwnd, hdc);
+        free_hdc(wgs, hdc);
     }
 }
 
@@ -358,7 +359,7 @@ static void activate_session(WinGuiSession *wgs) {
                 wm_size_resize_term(wgs, MAKELPARAM(width, height), false);
             }
             reset_window(wgs, 0);
-            InvalidateRect(term_hwnd, NULL, true);
+            InvalidateRect(wgs->term_hwnd, NULL, true);
         }
     } else {
         wgs->resize_either.was_zoomed = false;
@@ -366,7 +367,7 @@ static void activate_session(WinGuiSession *wgs) {
             reset_window(wgs, 1);
         } else if (resize_action == RESIZE_FONT) {
             reset_window(wgs, 0);
-            InvalidateRect(term_hwnd, NULL, true);
+            InvalidateRect(wgs->term_hwnd, NULL, true);
         } else {
             if (resize_action == RESIZE_EITHER && was_zoomed) {
                 deinit_fonts(wgs);
