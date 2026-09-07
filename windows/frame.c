@@ -74,7 +74,7 @@ static bool create_conf(const char *saved_session, Conf **conf, const char **ses
         *session_name = dupstr(saved_session);
         return true;
     }
-    int config_result = do_config(frame_hwnd, *conf, session_name);
+    int config_result = do_config_pp(frame_hwnd, *conf, session_name);
     if (!config_result) {
         conf_free(*conf);
         return false;

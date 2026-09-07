@@ -34,7 +34,6 @@ Based on this and the original cmake files you can adapt for other environments.
    `rm putty-0.81/be_list.c
  putty-0.81/windows/conpty.c
  putty-0.81/windows/dialog.c
- putty-0.81/windows/platform.h
  putty-0.81/windows/putty.c
  putty-0.81/windows/putty.rc
  putty-0.81/windows/utils/shinydialogbox.c

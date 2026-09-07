@@ -884,7 +884,7 @@ static void set_session_name(const char *session_name, struct controlbox *ctrlbo
     }
 }
 
-bool do_config(HWND parent, Conf *conf, const char **session_name)
+bool do_config_pp(HWND parent, Conf *conf, const char **session_name)
 {
     assert(session_name && *session_name == NULL);
     bool ret;
@@ -920,7 +920,7 @@ bool do_config(HWND parent, Conf *conf, const char **session_name)
     return ret;
 }
 
-bool do_reconfig(HWND parent, Conf *conf, const char **session_name, int protcfginfo)
+bool do_reconfig_pp(HWND parent, Conf *conf, const char **session_name, int protcfginfo)
 {
     assert(session_name && *session_name);
     Conf *backup_conf;
@@ -995,7 +995,7 @@ void dlg_eventlog(eventlog_stuff *es, const char *string)
     }
 }
 
-void showeventlog(HWND hwnd, eventlog_stuff *es)
+void showeventlog_pp(HWND hwnd, eventlog_stuff *es)
 {
     if (!logbox) {
         logbox = CreateDialogParam(hinst, MAKEINTRESOURCE(IDD_LOGBOX),

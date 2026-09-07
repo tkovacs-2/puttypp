@@ -6,11 +6,16 @@
 #define LOGEVENT_INITIAL_MAX 128
 #define LOGEVENT_CIRCULAR_MAX 128
 
-struct eventlog_stuff {
+typedef struct eventlog_stuff {
     char *events_initial[LOGEVENT_INITIAL_MAX];
     char *events_circular[LOGEVENT_CIRCULAR_MAX];
     int ninitial, ncircular, circular_first;
-};
+} eventlog_stuff;
+
+bool do_config_pp(HWND, Conf *, const char **);
+bool do_reconfig_pp(HWND, Conf *, const char **, int);
+void showeventlog_pp(HWND, eventlog_stuff *);
+void reseteventlog(eventlog_stuff *);
 
 const SeatDialogPromptDescriptions *win_seat_prompt_descriptions(Seat *seat);
 

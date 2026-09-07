@@ -370,7 +370,7 @@ static bool win_seat_can_set_trust_status(Seat *seat);
 static bool win_seat_get_cursor_position(Seat *seat, int *x, int *y);
 static bool win_seat_get_window_pixel_size(Seat *seat, int *x, int *y);
 
-static SeatPromptResult win_seat_confirm_ssh_host_key(
+SeatPromptResult win_seat_confirm_ssh_host_key(
     Seat *seat, const char *host, int port, const char *keytype,
     char *keystr, SeatDialogText *text, HelpCtx helpctx,
     void (*callback)(void *ctx, SeatPromptResult result), void *cbctx)
@@ -378,14 +378,14 @@ static SeatPromptResult win_seat_confirm_ssh_host_key(
     return dlg_confirm_ssh_host_key(frame_hwnd, host, port, keytype, keystr, text, helpctx);
 }
 
-static SeatPromptResult win_seat_confirm_weak_crypto_primitive(
+SeatPromptResult win_seat_confirm_weak_crypto_primitive(
     Seat *seat, SeatDialogText *text,
     void (*callback)(void *ctx, SeatPromptResult result), void *ctx)
 {
     return dlg_confirm_weak_crypto_primitive(text);
 }
 
-static SeatPromptResult win_seat_confirm_weak_cached_hostkey(
+SeatPromptResult win_seat_confirm_weak_cached_hostkey(
     Seat *seat, SeatDialogText *text,
     void (*callback)(void *ctx, SeatPromptResult result), void *ctx)
 {
@@ -2440,7 +2440,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             PostMessage(hwnd, WM_CLOSE, 0, 0);
             break;
           case IDM_SHOWLOG:
-            showeventlog(hwnd, &wgs->eventlogstuff);
+            showeventlog_pp(hwnd, &wgs->eventlogstuff);
             break;
           case IDM_CONFIRM_PASTE:
             confirm_paste = !confirm_paste;
@@ -2567,11 +2567,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             prev_conf = conf_copy(wgs->conf);
 
             const char *session_name = dupstr(wgs->session_name);
-            reconfig_result = do_reconfig(frame_hwnd,
+            reconfig_result = do_reconfig_pp(frame_hwnd,
                 wgs->conf, &session_name, wgs->backend ? backend_cfg_info(wgs->backend) : 0);
             if (!reconfig_result) {
               conf_free(prev_conf);
-              // do_reconfig will free session_name if cancelled.
+              // do_reconfig_pp will free session_name if cancelled.
               break;
             }
             if (strcmp(session_name, wgs->session_name) == 0) {

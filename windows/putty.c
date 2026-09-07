@@ -1,5 +1,6 @@
 #include "putty.h"
 #include "storage.h"
+#include "win-gui-seat.h"
 
 extern bool sesslist_demo_mode;
 extern const char *dialog_box_demo_screenshot_filename;
@@ -38,7 +39,7 @@ void gui_term_process_cmdline(Conf *conf, char *cmdline)
         if (conf_launchable(conf)) {
             cmdline_session_name = dupstr(p + 1);
         } else {
-            if (!do_config(NULL, conf, &cmdline_session_name)) {
+            if (!do_config_pp(NULL, conf, &cmdline_session_name)) {
                 cleanup_exit(0);
             }
         }
@@ -145,7 +146,7 @@ void gui_term_process_cmdline(Conf *conf, char *cmdline)
         sesslist_demo_mode = true;
         load_open_settings(NULL, conf);
         conf_set_str(conf, CONF_host, "demo-server.example.com");
-        do_config(NULL, conf, &cmdline_session_name);
+        do_config_pp(NULL, conf, &cmdline_session_name);
         cleanup_exit(0);
     } else if (demo_terminal_data) {
         /* Ensure conf will cause an immediate session launch */
@@ -162,7 +163,7 @@ void gui_term_process_cmdline(Conf *conf, char *cmdline)
                 sfree((char *)cmdline_session_name);
                 cmdline_session_name = NULL;
             }
-            if (!do_config(NULL, conf, &cmdline_session_name)) {
+            if (!do_config_pp(NULL, conf, &cmdline_session_name)) {
                 cleanup_exit(0);
             }
         }
