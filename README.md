@@ -2,7 +2,7 @@
 
 #### Current features:
 
-- Full knowledge of PuTTY 0.82
+- Full knowledge of PuTTY 0.85
 - Multiple terminal sessions in single frame window.
   No background PuTTY processes, no window embedding.
   Everything is handled by single process.
@@ -26,15 +26,15 @@ This readme describes steps with MinGW-w64 in Cygwin environment.
 Based on this and the original cmake files you can adapt for other environments.
 
 1. Install the `cmake`, `make`, `git` and `mingw64-<your arch>-gcc-core` Cygwin packages.
-2. Download PuTTY 0.82 source from [https://the.earth.li/~sgtatham/putty/0.82/putty-0.82.tar.gz](https://the.earth.li/~sgtatham/putty/0.82/putty-0.82.tar.gz)
-   or through the release page [https://www.chiark.greenend.org.uk/~sgtatham/putty/releases/0.82.html](https://www.chiark.greenend.org.uk/~sgtatham/putty/releases/0.82.html)
+2. Download PuTTY 0.85 source from [https://the.earth.li/~sgtatham/putty/0.85/putty-0.85.tar.gz](https://the.earth.li/~sgtatham/putty/0.85/putty-0.85.tar.gz)
+   or through the release page [https://www.chiark.greenend.org.uk/~sgtatham/putty/releases/0.85.html](https://www.chiark.greenend.org.uk/~sgtatham/putty/releases/0.85.html)
 3. Extract it into same folder like this readme file.
-   A new folder name putty-0.82 should appear with the original PuTTY 0.82 source inside.
-4. Remove some files from the putty-0.82 folder, call:
-   `rm putty-0.82/windows/version.rc2
- putty-0.82/windows/win-gui-seat.h`
-5. Apply a small patch on the putty-0.82 folder, call:
-   `sed -i 's/static void set_erase_char(/static void set_erase_char_original(/' putty-0.82/terminal/terminal.c`
+   A new folder name putty-0.85 should appear with the original PuTTY 0.85 source inside.
+4. Remove some files from the putty-0.85 folder, call:
+   `rm putty-0.85/windows/version.rc2
+ putty-0.85/windows/win-gui-seat.h`
+5. Apply a small patch on the putty-0.85 folder, call:
+   `sed -i 's/static void set_erase_char(/static void set_erase_char_original(/' putty-0.85/terminal/terminal.c`
 6. `cd windows`
 7. `make -f Makefile.mgw TOOLPATH=<your arch>-w64-mingw32- putty++.exe`
 
