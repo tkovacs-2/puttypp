@@ -13,7 +13,7 @@ static void register_frame_class() {
     wndclass.hCursor = LoadCursor(NULL, MAKEINTRESOURCE(IDC_ARROW));
     wndclass.hbrBackground = NULL;
     wndclass.lpszMenuName = NULL;
-    wndclass.lpszClassName = dup_mb_to_wc(DEFAULT_CODEPAGE, 0, appname);
+    wndclass.lpszClassName = dup_mb_to_wc(DEFAULT_CODEPAGE, appname);
 
     RegisterClassW(&wndclass);
 }
@@ -35,7 +35,7 @@ static HWND create_frame_window(Conf *conf, int guess_width, int guess_height) {
         exwinmode |= WS_EX_TOPMOST;
     if (conf_get_bool(conf, CONF_sunken_edge))
         exwinmode |= WS_EX_CLIENTEDGE;
-    wchar_t *uappname = dup_mb_to_wc(DEFAULT_CODEPAGE, 0, appname);
+    wchar_t *uappname = dup_mb_to_wc(DEFAULT_CODEPAGE, appname);
     HWND hwnd = CreateWindowExW(
         exwinmode, uappname, uappname, winmode, CW_USEDEFAULT,
         CW_USEDEFAULT, guess_width, guess_height, NULL, NULL, hinst, NULL);
@@ -124,14 +124,14 @@ static WinGuiSession *create_frontend(Conf *conf, const char *session_name) {
     wgs->seat.vt = &win_seat_vt;
     wgs->logpolicy.vt = &win_gui_logpolicy_vt;
     wgs->need_backend_resize = false;
-    wgs->wnd_proc.ignore_clip = false;
-    wgs->syschar.pending_surrogate = 0;
-    wgs->translate_key.alt_sum = 0;
-    wgs->translate_key.compose_char = 0;
-    wgs->translate_key.compose_keycode = 0;
+    wgs->ignore_clip = false;
+    wgs->pending_surrogate = 0;
+    wgs->alt_numberpad_accumulator = 0;
+    wgs->compose_char = 0;
+    wgs->compose_keycode = 0;
 
-    wgs->window_name = dup_mb_to_wc(DEFAULT_CODEPAGE, 0, appname);
-    wgs->icon_name = dup_mb_to_wc(DEFAULT_CODEPAGE, 0, appname);
+    wgs->window_name = dup_mb_to_wc(DEFAULT_CODEPAGE, appname);
+    wgs->icon_name = dup_mb_to_wc(DEFAULT_CODEPAGE, appname);
 
     memset(&wgs->ucsdata, 0, sizeof(wgs->ucsdata));
     conf_cache_data(wgs);
@@ -356,7 +356,7 @@ static void activate_session(WinGuiSession *wgs) {
                 GetWindowPlacement(frame_hwnd, &wp);
                 int width = wp.rcNormalPosition.right-wp.rcNormalPosition.left-extra_width+tab_bar_get_extra_width();
                 int height = wp.rcNormalPosition.bottom-wp.rcNormalPosition.top-extra_height+tab_bar_get_extra_height();
-                wm_size_resize_term(wgs, MAKELPARAM(width, height), false);
+                wm_size_resize_term(wgs, MAKELPARAM(width, height));
             }
             reset_window(wgs, 0);
             InvalidateRect(wgs->term_hwnd, NULL, true);
@@ -375,7 +375,7 @@ static void activate_session(WinGuiSession *wgs) {
             }
             RECT r;
             GetClientRect(frame_hwnd, &r);
-            wm_size_resize_term(wgs, MAKELPARAM(r.right-r.left, r.bottom-r.top), true);
+            wm_size_resize_term(wgs, MAKELPARAM(r.right-r.left, r.bottom-r.top));
             reset_window(wgs, 1);
         }
     }
