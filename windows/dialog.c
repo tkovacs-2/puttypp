@@ -245,6 +245,47 @@ static char *getevent(eventlog_stuff *es, int i)
 static HWND logbox;
 HWND event_log_window(void) { return logbox; }
 
+static void update_logbox_horizontal_extent(HWND logbox)
+{
+    /* Find the width of every entry in the current Event Log, and set
+     * the horizontal scrollbar so that you can scroll right to see
+     * all of them. */
+    HWND listbox = GetDlgItem(logbox, IDN_LIST);
+    HDC hdc = GetDC(listbox);
+    int count = SendMessage(listbox, LB_GETCOUNT, 0, 0);
+    strbuf *sb = strbuf_new();
+    WPARAM maxwidth = 0;
+    for (int i = 0; i < count; i++) {
+        size_t len = SendMessage(listbox, LB_GETTEXTLEN, i, 0);
+        strbuf_clear(sb);
+        SendMessage(listbox, LB_GETTEXT, i, (LPARAM)strbuf_append(sb, len));
+        SIZE size;
+        if (GetTextExtentPoint(hdc, sb->s, sb->len, &size)) {
+            if (maxwidth < size.cx)
+                maxwidth = size.cx;
+        }
+    }
+    strbuf_free(sb);
+    ReleaseDC(listbox, hdc);
+
+    /*
+     * This doesn't seem to set _exactly_ the right width. If I scroll
+     * the scrollbar right as far as it will go, I find I end up with
+     * a bit of extra space on the right of the longest piece of text.
+     * I don't know why that is.
+     *
+     * Testing with debug(), GetTextExtentPoint seems to be correctly
+     * returning the exact width in pixels of each log entry's text.
+     * And the docs for LB_SETHORIZONTALEXTENT say that it wants a
+     * width in pixels too. So I don't think it can be the usual
+     * problem of confusing logical dialog units and pixels. (In any
+     * case, on the high-DPI display where I tested, the difference
+     * between those is more than a factor of 2, whereas I'm seeing a
+     * discrepancy of only about 10%.)
+     */
+    SendMessage(listbox, LB_SETHORIZONTALEXTENT, maxwidth, 0);
+}
+
 void reseteventlog(eventlog_stuff *es) {
     if (!logbox) {
         return;
@@ -257,6 +298,7 @@ void reseteventlog(eventlog_stuff *es) {
         SendDlgItemMessage(logbox, IDN_LIST, LB_ADDSTRING,
                            0, (LPARAM) es->events_circular[(es->circular_first + i) % LOGEVENT_CIRCULAR_MAX]);
     SetWindowLongPtr(logbox, GWL_USERDATA, (LONG_PTR)es);
+    update_logbox_horizontal_extent(logbox);
 }
 
 static INT_PTR CALLBACK LogProc(HWND hwnd, UINT msg,
@@ -271,6 +313,8 @@ static INT_PTR CALLBACK LogProc(HWND hwnd, UINT msg,
         static int tabs[4] = { 78, 108 };
         SendDlgItemMessage(hwnd, IDN_LIST, LB_SETTABSTOPS, 2,
                            (LPARAM) tabs);
+
+		reseteventlog((eventlog_stuff *)lParam);
         return 1;
       }
       case WM_COMMAND:
@@ -969,6 +1013,8 @@ void dlg_eventlog(eventlog_stuff *es, const char *string)
                            0, (LPARAM) *location);
         count = SendDlgItemMessage(logbox, IDN_LIST, LB_GETCOUNT, 0, 0);
         SendDlgItemMessage(logbox, IDN_LIST, LB_SETTOPINDEX, count - 1, 0);
+
+        update_logbox_horizontal_extent(logbox);
     }
     if (es->ninitial < LOGEVENT_INITIAL_MAX) {
         es->ninitial++;
@@ -986,7 +1032,6 @@ void showeventlog_pp(HWND hwnd, eventlog_stuff *es)
     if (!logbox) {
         logbox = CreateDialogParam(hinst, MAKEINTRESOURCE(IDD_LOGBOX),
                               hwnd, LogProc, (LPARAM)es);
-        reseteventlog(es);
         ShowWindow(logbox, SW_SHOWNORMAL);
     }
     SetActiveWindow(logbox);
