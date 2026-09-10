@@ -4,29 +4,17 @@
 
 static wchar_t *utf8_to_wc(const char *utf8)
 {
-    return dup_mb_to_wc(CP_UTF8, 0, utf8);
+    return dup_mb_to_wc(CP_UTF8, utf8);
 }
 
 static char *utf8_from_wc_c(const wchar_t *wc, int len)
 {
-    size_t outsize = len+MB_LEN_MAX+1;
-    char *out = snewn(outsize, char);
-
-    while (true) {
-        size_t outlen = wc_to_mb(CP_UTF8, 0, wc, len, out, outsize, NULL);
-        /* We can only be sure we've consumed the whole input if the
-         * output is not within a multibyte-character-length of the
-         * end of the buffer! */
-        if ((outlen > 0 || len == 0) && outlen < outsize && outsize - outlen > MB_LEN_MAX) {
-            out[outlen] = '\0';
-            return out;
-        }
-        sgrowarray(out, outsize, outsize);
-    }
+    return dup_wc_to_mb_c(CP_UTF8, wc, len, NULL, NULL);
 }
 
-static char *utf8_from_wc(const wchar_t *wc) {
-    return utf8_from_wc_c(wc, wcslen(wc));
+static char *utf8_from_wc(const wchar_t *wc)
+{
+    return dup_wc_to_mb(CP_UTF8, wc, NULL);
 }
 
 /*

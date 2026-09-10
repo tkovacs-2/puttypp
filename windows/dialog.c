@@ -299,10 +299,7 @@ static INT_PTR CALLBACK LogProc(HWND hwnd, UINT msg,
                                                    LB_GETSELITEMS,
                                                    selcount,
                                                    (LPARAM) selitems);
-                    int i;
-                    int size;
-                    char *clipdata;
-                    static unsigned char sel_nl[] = SEL_NL;
+                    static const unsigned char sel_nl[] = SEL_NL;
 
                     if (count == 0) {  /* can't copy zero stuff */
                         MessageBeep(0);
@@ -311,28 +308,17 @@ static INT_PTR CALLBACK LogProc(HWND hwnd, UINT msg,
 
                     eventlog_stuff *es = (eventlog_stuff *)GetWindowLongPtr(hwnd, GWL_USERDATA);
 
-                    size = 0;
-                    for (i = 0; i < count; i++)
-                        size +=
-                            strlen(getevent(es, selitems[i])) + sizeof(sel_nl);
-
-                    clipdata = snewn(size, char);
-                    if (clipdata) {
-                        char *p = clipdata;
-                        for (i = 0; i < count; i++) {
-                            char *q = getevent(es, selitems[i]);
-                            int qlen = strlen(q);
-                            memcpy(p, q, qlen);
-                            p += qlen;
-                            memcpy(p, sel_nl, sizeof(sel_nl));
-                            p += sizeof(sel_nl);
-                        }
-                        write_aclip(CLIP_SYSTEM, clipdata, size, true);
-                        sfree(clipdata);
+                    strbuf *sb = strbuf_new();
+                    for (int i = 0; i < count; i++) {
+                        char *q = getevent(es, selitems[i]);
+                        put_datapl(sb, ptrlen_from_asciz(q));
+                        put_data(sb, sel_nl, sizeof(sel_nl));
                     }
+                    write_aclip(hwnd, CLIP_SYSTEM, sb->s, sb->len);
+                    strbuf_free(sb);
                     sfree(selitems);
 
-                    for (i = 0; i < (es->ninitial + es->ncircular); i++)
+                    for (int i = 0; i < (es->ninitial + es->ncircular); i++)
                         SendDlgItemMessage(hwnd, IDN_LIST, LB_SETSEL,
                                            false, i);
                 }
@@ -477,7 +463,7 @@ static HTREEITEM treeview_insert(struct treeview_faff *faff,
     return newitem;
 }
 
-const char *dialog_box_demo_screenshot_filename = NULL;
+Filename *dialog_box_demo_screenshot_filename = NULL;
 
 /* ctrltrees indices for the main dialog box */
 enum {
@@ -1328,7 +1314,7 @@ const SeatDialogPromptDescriptions *win_seat_prompt_descriptions(Seat *seat)
 }
 
 SeatPromptResult dlg_confirm_ssh_host_key(
-    HWND hwnd, const char *host, int port, const char *keytype,
+    HWND hwnd, Seat *seat, const char *host, int port, const char *keytype,
     char *keystr, SeatDialogText *text, HelpCtx helpctx)
 {
     struct hostkey_dialog_ctx ctx[1];
@@ -1340,7 +1326,7 @@ SeatPromptResult dlg_confirm_ssh_host_key(
         hwnd, HostKeyDialogProc, ctx);
         assert(mbret==IDC_HK_ACCEPT || mbret==IDC_HK_ONCE || mbret==IDCANCEL);
         if (mbret == IDC_HK_ACCEPT) {
-            store_host_key(host, port, keytype, keystr);
+        store_host_key(seat, host, port, keytype, keystr);
         return SPR_OK;
     } else if (mbret == IDC_HK_ONCE) {
         return SPR_OK;
@@ -1404,11 +1390,12 @@ int dlg_askappend(Filename *filename)
     char *mbtitle;
     int mbret;
 
-    message = dupprintf(msgtemplate, FILENAME_MAX, filename->path);
+    message = dupprintf(msgtemplate, FILENAME_MAX, filename->utf8path);
     mbtitle = dupprintf("%s Log to File", appname);
 
-    mbret = MessageBox(NULL, message, mbtitle,
-                       MB_ICONQUESTION | MB_YESNOCANCEL | MB_DEFBUTTON3);
+    mbret = message_box(NULL, message, mbtitle,
+                        MB_ICONQUESTION | MB_YESNOCANCEL | MB_DEFBUTTON3,
+                        true, 0);
 
     socket_reselect_all();
 
