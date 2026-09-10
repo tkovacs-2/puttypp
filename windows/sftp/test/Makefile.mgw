@@ -2,6 +2,7 @@
 CC = $(TOOLPATH)gcc
 
 OBJDIR := obj
+PUTTY := putty-0.85
 
 CFLAGS = -Wall -O0 -std=gnu99 -Wvla -D_WINDOWS -DWIN32S_COMPAT -g\
 		-D_NO_OLDNAMES -D__USE_MINGW_ANSI_STDIO=1 \
@@ -10,9 +11,9 @@ CFLAGS = -Wall -O0 -std=gnu99 -Wvla -D_WINDOWS -DWIN32S_COMPAT -g\
 		-DHAVE_AFUNIX_H=1 \
 		-DHAVE_SETDEFAULTDLLDIRECTORIES=1 \
 		-DHAVE_GCP_RESULTSW=1 \
-		-I../../../putty-0.82/ \
-		-I../../../putty-0.82/terminal \
-		-I../../../putty-0.82/windows \
+		-I../../../$(PUTTY)/ \
+		-I../../../$(PUTTY)/terminal \
+		-I../../../$(PUTTY)/windows \
 		-I../../../windows \
 		-I../../../windows/sftp \
 		-I../../../windows/sftp/test
@@ -27,37 +28,37 @@ CFLAGS += -DWINVER=0x0500 -D_WIN32_WINDOWS=0x0410 -D_WIN32_WINNT=0x0500
 
 .SUFFIXES:
 
-SOURCES :=  ../../../putty-0.82/windows/utils/filename.c \
-            ../../../putty-0.82/windows/utils/fontspec.c \
-            ../../../putty-0.82/windows/utils/win_strerror.c \
-            ../../../putty-0.82/utils/bufchain.c \
-            ../../../putty-0.82/utils/burnstr.c \
-            ../../../putty-0.82/utils/conf.c \
-            ../../../putty-0.82/utils/conf_data.c \
-            ../../../putty-0.82/utils/dupcat.c \
-            ../../../putty-0.82/utils/dupprintf.c \
-            ../../../putty-0.82/utils/dupstr.c \
-            ../../../putty-0.82/utils/dupwcs.c \
-            ../../../putty-0.82/utils/decode_utf8.c \
-            ../../../putty-0.82/utils/decode_utf8_to_wchar.c \
-            ../../../putty-0.82/utils/decode_utf8_to_wide_string.c \
-            ../../../putty-0.82/utils/encode_utf8.c \
-            ../../../putty-0.82/utils/encode_wide_string_as_utf8.c \
-            ../../../putty-0.82/utils/make_spr_sw_abort_static.c \
-            ../../../putty-0.82/utils/marshal.c \
-            ../../../putty-0.82/utils/memory.c \
-            ../../../putty-0.82/utils/out_of_memory.c \
-            ../../../putty-0.82/utils/ptrlen.c \
-            ../../../putty-0.82/utils/seat_connection_fatal.c \
-            ../../../putty-0.82/utils/smemclr.c \
-            ../../../putty-0.82/utils/strbuf.c \
-            ../../../putty-0.82/utils/tree234.c \
-            ../../../putty-0.82/utils/wildcard.c \
-            ../../../putty-0.82/utils/wcwidth.c \
-            ../../../putty-0.82/utils/dup_mb_to_wc.c \
-            ../../../putty-0.82/utils/dup_wc_to_mb.c \
-            ../../../putty-0.82/stubs/null-seat.c \
-            ../../../putty-0.82/console.c \
+SOURCES :=  ../../../$(PUTTY)/windows/utils/filename.c \
+            ../../../$(PUTTY)/windows/utils/fontspec.c \
+            ../../../$(PUTTY)/windows/utils/win_strerror.c \
+            ../../../$(PUTTY)/utils/bufchain.c \
+            ../../../$(PUTTY)/utils/burnstr.c \
+            ../../../$(PUTTY)/utils/conf.c \
+            ../../../$(PUTTY)/utils/conf_data.c \
+            ../../../$(PUTTY)/utils/dupcat.c \
+            ../../../$(PUTTY)/utils/dupprintf.c \
+            ../../../$(PUTTY)/utils/dupstr.c \
+            ../../../$(PUTTY)/utils/dupwcs.c \
+            ../../../$(PUTTY)/utils/decode_utf8.c \
+            ../../../$(PUTTY)/utils/decode_utf8_to_wchar.c \
+            ../../../$(PUTTY)/utils/decode_utf8_to_wide_string.c \
+            ../../../$(PUTTY)/utils/encode_utf8.c \
+            ../../../$(PUTTY)/utils/encode_wide_string_as_utf8.c \
+            ../../../$(PUTTY)/utils/make_spr_sw_abort_static.c \
+            ../../../$(PUTTY)/utils/marshal.c \
+            ../../../$(PUTTY)/utils/memory.c \
+            ../../../$(PUTTY)/utils/out_of_memory.c \
+            ../../../$(PUTTY)/utils/ptrlen.c \
+            ../../../$(PUTTY)/utils/seat_connection_fatal.c \
+            ../../../$(PUTTY)/utils/smemclr.c \
+            ../../../$(PUTTY)/utils/strbuf.c \
+            ../../../$(PUTTY)/utils/tree234.c \
+            ../../../$(PUTTY)/utils/wildcard.c \
+            ../../../$(PUTTY)/utils/wcwidth.c \
+            ../../../$(PUTTY)/utils/dup_mb_to_wc.c \
+            ../../../$(PUTTY)/utils/dup_wc_to_mb.c \
+            ../../../$(PUTTY)/stubs/null-seat.c \
+            ../../../$(PUTTY)/console.c \
             ../../../windows/sftp/sftpbe.c \
             ../../../windows/sftp/sftpfxp.c \
             ../../../windows/sftp/sftpcli.c \
@@ -82,9 +83,9 @@ SOURCES :=  ../../../putty-0.82/windows/utils/filename.c \
             ../../../windows/sftp/linenoise/linenoise.c \
             ../../../windows/sftp/psftp.c \
             ../../../windows/unicode_public.c \
-            ../../../putty-0.82/ssh/sftpcommon.c \
-            ../../../putty-0.82/ssh/sftpserver.c \
-            ../../../putty-0.82/psftpcommon.c \
+            ../../../$(PUTTY)/ssh/sftpcommon.c \
+            ../../../$(PUTTY)/ssh/sftpserver.c \
+            ../../../$(PUTTY)/psftpcommon.c \
             ../../../windows/sftp/test/testremote.c \
             ../../../windows/sftp/test/testlocal.c \
             ../../../windows/sftp/test/testsuite_sftpbe.c \
@@ -93,7 +94,7 @@ SOURCES :=  ../../../putty-0.82/windows/utils/filename.c \
             ../../../windows/sftp/test/testsuite_linenoise.c \
             ../../../windows/sftp/test/main.c
 
-getobjdir = $(patsubst %,$(OBJDIR)/%.$(2),$(subst /,__,$(subst putty-0.82/,,$(subst ../../../,,$(basename $(1))))))
+getobjdir = $(patsubst %,$(OBJDIR)/%.$(2),$(subst /,__,$(subst $(PUTTY)/,,$(subst ../../../,,$(basename $(1))))))
 
 $(OBJDIR):
 	mkdir -p $(OBJDIR)
