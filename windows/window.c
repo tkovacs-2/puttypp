@@ -807,8 +807,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
             AppendMenu(m, MF_ENABLED, IDM_CLRSB, "C&lear Scrollback");
             AppendMenu(m, MF_ENABLED, IDM_RESET, "Rese&t Terminal");
             AppendMenu(m, MF_SEPARATOR, 0, 0);
-            AppendMenu(m, MF_ENABLED, IDM_FULLSCREEN, "&Full Screen");
             AppendMenu(m, MF_ENABLED, IDM_SHOWLOG, "&Event Log");
+            AppendMenu(m, MF_ENABLED, IDM_FULLSCREEN, "&Full Screen");
             AppendMenu(m, MF_ENABLED | (confirm_paste ? MF_CHECKED : MF_UNCHECKED), IDM_CONFIRM_PASTE, "Confirm Paste");
             AppendMenu(m, MF_ENABLED, IDM_FIND, "&Find...");
             AppendMenu(m, MF_SEPARATOR, 0, 0);
