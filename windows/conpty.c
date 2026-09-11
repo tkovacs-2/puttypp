@@ -352,10 +352,7 @@ static void conpty_special(Backend *be, SessionSpecialCode code, int arg)
 
 static const SessionSpecial *conpty_get_specials(Backend *be)
 {
-    static const SessionSpecial specials[] = {
-        {NULL, SS_EXITMENU}
-    };
-    return specials;
+    return NULL;
 }
 
 static bool conpty_connected(Backend *be)
