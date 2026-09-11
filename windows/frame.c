@@ -449,6 +449,8 @@ static void update_finddlg(WinGuiSession *wgs) {
         if (wgs->find.pattern_len > 1) {
             find_match_mask_alloc(&find_match_mask, wgs->term->rows, wgs->term->cols);
             find_display(wgs->term, wgs->find.pattern, wgs->find.pattern_len, wgs->find.ignore_case, wgs->find.whole_word, &find_match_mask);
+        } else {
+            find_match_mask_free(&find_match_mask);
         }
     } else {
         find_match_mask_free(&find_match_mask);
