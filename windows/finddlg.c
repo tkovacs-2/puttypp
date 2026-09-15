@@ -207,7 +207,7 @@ static void layout_controls(FindDlg *finddlg, bool compact) {
 
 static void layout_window(FindDlg *finddlg, const RECT *parent_rect, bool activate) {
     POINT pos;
-    SIZE size;
+    SIZE size = {0, 0};
     AdjustState state = adjust_window(finddlg, parent_rect, &pos, &size);
     int flags = SWP_NOZORDER;
     if (state == ADJUST_STATE_HIDDEN) {

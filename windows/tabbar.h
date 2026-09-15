@@ -42,5 +42,6 @@ void tab_bar_import_tab(TabBar *tab_bar, TabBar *source, int target_index, int s
 TabBar *tab_bar_get_from_hwnd(HWND hwnd);
 void tab_bar_set_focused(TabBar *tab_bar, bool focused);
 void tab_bar_cancel_dragging(TabBar *tab_bar);
+void tab_bar_get_selected_tab_hotspot(TabBar *tab_bar, POINT *hotspot);
 
 #endif

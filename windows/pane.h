@@ -1,8 +1,12 @@
+#ifndef PANE_H
+#define PANE_H
 
 typedef struct Pane Pane;
 typedef struct WinGuiSession WinGuiSession;
 
-Pane *pane_create(const RECT *rect, PointerArraySetIndex set_index_callback);
+typedef void (*PaneSetIndexCallback)(WinGuiSession *wgs, int index);
+
+Pane *pane_create(const RECT *rect, PaneSetIndexCallback set_index_callback);
 void pane_destroy(Pane *pane);
 
 void pane_dpi_changed(Pane *pane);
@@ -51,3 +55,7 @@ bool pane_get_finddlg_ignore_case(Pane *pane);
 bool pane_get_finddlg_whole_word(Pane *pane);
 
 void pane_redraw_term(Pane *pane);
+
+void pane_get_active_session_hotspot(Pane *pane, POINT *hotspot);
+
+#endif

@@ -1,6 +1,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <windows.h>
+#include <windowsx.h>
 #include <commctrl.h>
 
 #include "tabbar.h"
@@ -143,14 +144,6 @@ static int TabBarPlus_getTabIndexAt(HWND _hSelf, const POINT *point)
     hitInfo.pt = *point;
     return SendMessage(_hSelf, TCM_HITTEST, 0, (LPARAM)&hitInfo);
 };
-
-static POINT TabBarPlus_getPointFromLParam(LPARAM lParam)
-{
-    POINT point;
-    point.x = (int)(short)LOWORD(lParam);
-    point.y = (int)(short)HIWORD(lParam);
-    return point;
-}
 
 static bool TabBarPlus_isPointOutside(HWND _hSelf, const POINT *point)
 {
@@ -499,7 +492,7 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
     {
         case WM_LBUTTONDOWN :
         {
-            POINT p = TabBarPlus_getPointFromLParam(lParam);
+            POINT p = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
 
             if (CloseButtonZone_isHit(&p, &_currentHoverTabRect))
             {
@@ -561,11 +554,11 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
                     }
                 }
             }
-            POINT p = TabBarPlus_getPointFromLParam(lParam);
+            POINT p = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             {
-                RECT r;
-                GetWindowRect(_hSelf, &r);
-                SendMessage(GetParent(_hSelf), WM_NCMOUSEMOVE, (WPARAM)HTCLIENT, MAKELPARAM(r.left+p.x, r.top+p.y));
+                POINT frame_p = p;
+                MapWindowPoints(_hSelf, frame_hwnd, &frame_p, 1);
+                SendMessage(frame_hwnd, WM_MOUSEMOVE, wParam, MAKELPARAM(frame_p.x, frame_p.y));
             }
 
             if (_isDragging)
@@ -671,7 +664,7 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
 
         case WM_LBUTTONUP :
         {
-            POINT p = TabBarPlus_getPointFromLParam(lParam);
+            POINT p = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             int currentTabOn = TabBarPlus_getTabIndexAt(hwnd, &p);
             if (_isDragging)
             {
@@ -731,7 +724,9 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
             // Around that we can only catch WM_NCHITTEST.
             LRESULT result = CallWindowProc(_tabBarDefaultProc, hwnd, Message, wParam, lParam);
             if (result == HTTRANSPARENT) {
-                SendMessage(GetParent(_hSelf), WM_NCMOUSEMOVE, (WPARAM)HTCLIENT, lParam);
+                POINT p = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+                ScreenToClient(frame_hwnd, &p);
+                SendMessage(frame_hwnd, WM_MOUSEMOVE, wParam, MAKELPARAM(p.x, p.y));
             }
             return result;
         }
@@ -1002,4 +997,12 @@ void tab_bar_cancel_dragging(TabBar *tab_bar) {
             TabBarPlus_notify(tab_bar->hwnd, TCN_OUTSIDE_CANCEL, _nTabDragged, NULL);
         }
     }
+}
+
+void tab_bar_get_selected_tab_hotspot(TabBar *tab_bar, POINT *hotspot) {
+    RECT rect;
+    TabCtrl_GetItemRect(tab_bar->hwnd, TabCtrl_GetCurSel(tab_bar->hwnd), &rect);
+    hotspot->x = rect.left;
+    hotspot->y = rect.bottom;
+    ClientToScreen(tab_bar->hwnd, hotspot);
 }

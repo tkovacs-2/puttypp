@@ -1,15 +1,726 @@
 
 static int session_counter = 1;
 
+static void destroy_sessions(Split *split);
+static void handle_finddlg_notify(NMHDR *hdr);
+static void handle_tab_bar_notify(TabBarNotify *notify);
+static void handle_wm_mouse_move(WPARAM wparam, LPARAM lparam);
+static void handle_wm_ncmouse_move(WPARAM wparam, LPARAM lparam);
+static void message_term_hwnds(Split *split, UINT message, WPARAM wparam, LPARAM lparam);
+static void handle_minimised_change();
+
+static void calculate_term_dimensions(WinGuiSession *wgs, const RECT *term_rect, int *cols, int *rows) {
+    int border = conf_get_int(wgs->conf, CONF_window_border);
+    int w = term_rect->right - border*2;
+    int h = term_rect->bottom - border*2;
+    *cols = w/wgs->font_width;
+    *rows = h/wgs->font_height;
+    if (*cols < 5) {
+        *cols = 5;
+    }
+    if (*rows < 1) {
+        *rows = 1;
+    }
+}
+
+static void calculate_font_size(WinGuiSession *wgs, const RECT *term_rect, int *width, int *height) {
+    int border = conf_get_int(wgs->conf, CONF_window_border);
+    int w = term_rect->right - border*2;
+    int h = term_rect->bottom - border*2;
+    *width = w/wgs->term->cols;
+    *height = h/wgs->term->rows;
+    if (*width < 2) {
+        *width = 2;
+    }
+    if (*height < 2) {
+        *height = 2;
+    }
+}
+
+static void gaps_font(WinGuiSession *wgs, const RECT *term_rect, int *width, int *height) {
+    calculate_font_size(wgs, term_rect, width, height);
+    *width *= wgs->term->cols;
+    *height *= wgs->term->rows;
+}
+
+static void gaps_term(WinGuiSession *wgs, const RECT *term_rect, int *width, int *height) {
+    calculate_term_dimensions(wgs, term_rect, width, height);
+    *width *= wgs->font_width;
+    *height *= wgs->font_height;
+}
+
+static void gaps_term_init(WinGuiSession *wgs, const RECT *term_rect, int *width, int *height) {
+    int w = wgs->font_width;
+    int h = wgs->font_height;
+    wgs->font_width = wgs->resize_either.init_font_width;
+    wgs->font_height = wgs->resize_either.init_font_height;
+    gaps_term(wgs, term_rect, width, height);
+    wgs->font_width = w;
+    wgs->font_height = h;
+}
+
+static void gaps_either(WinGuiSession *wgs, const RECT *term_rect, int *width, int *height) {
+    if (split_get_pane(root_split)) {
+        if (is_zoomed || is_fullscr) {
+            gaps_font(wgs, term_rect, width, height);
+        } else {
+            if (wgs->resize_either.maximized) {
+                if (wgs->resize_either.alt_pressed && wgs->resize_either.font_resized) {
+                    gaps_font(wgs, term_rect, width, height);
+                } else {
+                    gaps_term_init(wgs, term_rect, width, height);
+                }
+            } else if (wgs->resize_either.alt_pressed) {
+                gaps_font(wgs, term_rect, width, height);
+            } else {
+                gaps_term(wgs, term_rect, width, height);
+            }
+        }
+    } else {
+        gaps_term_init(wgs, term_rect, width, height);
+    }
+}
+
+static void calculate_term_rect_gaps(WinGuiSession *wgs, const RECT *term_rect, int *ew, int *eh) {
+    int width = 0;
+    int height = 0;
+    switch (conf_get_int(wgs->conf, CONF_resize_action)) {
+        case RESIZE_TERM:
+            gaps_term(wgs, term_rect, &width, &height);
+            break;
+        case RESIZE_FONT:
+            gaps_font(wgs, term_rect, &width, &height);
+            break;
+        case RESIZE_EITHER:
+            gaps_either(wgs, term_rect, &width, &height);
+            break;
+        default:
+            ew = 0;
+            eh = 0;
+            return;
+    }
+    int border = conf_get_int(wgs->conf, CONF_window_border);
+    width += border * 2;
+    height += border * 2;
+    *ew = term_rect->right - width;
+    *eh = term_rect->bottom - height;
+}
+
+static void init_term_dimensions(WinGuiSession *wgs) {
+    term_size(wgs->term, conf_get_int(wgs->conf, CONF_height),
+                         conf_get_int(wgs->conf, CONF_width),
+                         conf_get_int(wgs->conf, CONF_savelines));
+    if (conf_get_int(wgs->conf, CONF_resize_action) == RESIZE_EITHER) {
+        wgs->resize_either.init_font_width = wgs->font_width;
+        wgs->resize_either.init_font_height = wgs->font_height;
+    }
+}
+
+void possible_term_dimensions(WinGuiSession *wgs, const RECT *term_rect, int *cols, int *rows) {
+    switch (conf_get_int(wgs->conf, CONF_resize_action)) {
+        case RESIZE_DISABLED:
+        case RESIZE_FONT:
+            *cols = wgs->term->cols;
+            *rows = wgs->term->rows;
+            break;
+        case RESIZE_TERM:
+            calculate_term_dimensions(wgs, term_rect, cols, rows);
+            break;
+        case RESIZE_EITHER:
+            if (split_get_pane(root_split) && wgs->resize_either.alt_pressed) {
+                *cols = wgs->term->cols;
+                *rows = wgs->term->rows;
+            } else {
+                calculate_term_dimensions(wgs, term_rect, cols, rows);
+            }
+            break;
+    }
+}
+
+static void resize_font(WinGuiSession *wgs, const RECT *term_rect) {
+    int w, h;
+    calculate_font_size(wgs, term_rect, &w, &h);
+    if (w != wgs->font_width || h != wgs->font_height) {
+        deinit_fonts(wgs);
+        init_fonts(wgs, w, h);
+    } else {
+        wgs->font_dpi = 0;
+    }
+}
+
+static void resize_term_keep_font(WinGuiSession *wgs, const RECT *term_rect) {
+    int cols, rows;
+    calculate_term_dimensions(wgs, term_rect, &cols, &rows);
+    if (resizing) {
+        wgs->need_backend_resize = true;
+        wgs->backend_rows = rows;
+        wgs->backend_cols = cols;
+    } else {
+        if (wgs->term->cols != cols || wgs->term->rows != rows) {
+            term_size(wgs->term, rows, cols, conf_get_int(wgs->conf, CONF_savelines));
+            refresh_find_match_mask(wgs);
+        }
+    }
+    if (split_get_pane(root_split) && !is_zoomed && !is_fullscr) {
+        conf_set_int(wgs->conf, CONF_width, cols);
+        conf_set_int(wgs->conf, CONF_height, rows);
+    }
+}
+
+static void resize_term_reset_font(WinGuiSession *wgs, const RECT *term_rect) {
+    deinit_fonts(wgs);
+    init_fonts(wgs, 0, 0);
+    resize_term_keep_font(wgs, term_rect);
+}
+
+static void resize_term(WinGuiSession *wgs, const RECT *term_rect) {
+    if (wgs->font_dpi != dpi_info.y) {
+        deinit_fonts(wgs);
+        init_fonts(wgs, 0, 0);
+    }
+    resize_term_keep_font(wgs, term_rect);
+}
+
+static void resize_either_set_init_font(WinGuiSession *wgs) {
+    deinit_fonts(wgs);
+    init_fonts(wgs, 0, 0);
+    wgs->resize_either.font_dpi = dpi_info.y;
+    wgs->resize_either.init_font_width = wgs->font_width;
+    wgs->resize_either.init_font_height = wgs->font_height;
+}
+
+static void resize_either(WinGuiSession *wgs, const RECT *term_rect) {
+    if (split_get_pane(root_split)) {
+        if (is_zoomed || is_fullscr) {
+            if (!wgs->resize_either.maximized) {
+                wgs->resize_either.maximized = true;
+                wgs->resize_either.normal_font_width = wgs->font_width;
+                wgs->resize_either.normal_font_height = wgs->font_height;
+            }
+            if (wgs->resize_either.font_dpi != dpi_info.y) {
+                resize_either_set_init_font(wgs);
+            }
+            resize_font(wgs, term_rect);
+        } else {
+            if (wgs->resize_either.activate) {
+                if (wgs->resize_either.font_dpi != dpi_info.y) {
+                    resize_term_reset_font(wgs, term_rect);
+                    wgs->resize_either.maximized = false;
+                    wgs->resize_either.font_resized = false;
+                    wgs->resize_either.font_dpi = dpi_info.y;
+                    wgs->resize_either.init_font_width = wgs->font_width;
+                    wgs->resize_either.init_font_height = wgs->font_height;
+                } else if (wgs->resize_either.maximized) {
+                    wgs->resize_either.maximized = false;
+                    if (wgs->resize_either.font_resized) {
+                        deinit_fonts(wgs);
+                        init_fonts(wgs, wgs->resize_either.normal_font_width, wgs->resize_either.normal_font_height);
+                        resize_term_keep_font(wgs, term_rect);
+                    } else {
+                        resize_term_reset_font(wgs, term_rect);
+                    }
+                } else {
+                    resize_term_keep_font(wgs, term_rect);
+                }
+            } else if (wgs->resize_either.maximized) {
+                wgs->resize_either.maximized = false;
+                if (wgs->resize_either.alt_pressed && wgs->resize_either.font_resized) {
+                    resize_font(wgs, term_rect);
+                } else {
+                    resize_term_reset_font(wgs, term_rect);
+                    wgs->resize_either.font_resized = false;
+                }
+            } else if (wgs->resize_either.font_dpi != dpi_info.y) {
+                resize_either_set_init_font(wgs);
+                if (wgs->resize_either.font_resized) {
+                    resize_font(wgs, term_rect);
+                }
+                resize_term_keep_font(wgs, term_rect);
+            } else if (wgs->resize_either.alt_pressed) {
+                wgs->resize_either.font_resized = true;
+                resize_font(wgs, term_rect);
+            } else {
+                resize_term_keep_font(wgs, term_rect);
+            }
+        }
+        assert((!wgs->resize_either.font_resized && !wgs->resize_either.maximized && wgs->font_dpi > 0) ||
+               ((wgs->resize_either.font_resized || wgs->resize_either.maximized) && wgs->font_dpi == 0));
+    } else {
+        wgs->resize_either.font_resized = false;
+        wgs->resize_either.maximized = false;
+        resize_term(wgs, term_rect);
+        if (wgs->resize_either.font_dpi != dpi_info.y) {
+            wgs->resize_either.font_dpi = dpi_info.y;
+            wgs->resize_either.init_font_width = wgs->font_width;
+            wgs->resize_either.init_font_height = wgs->font_height;
+        }
+    }
+    wgs->resize_either.alt_pressed = false;
+    wgs->resize_either.activate = false;
+}
+
+static void resize_term_dimensions(WinGuiSession *wgs, const RECT *term_rect) {
+    switch (conf_get_int(wgs->conf, CONF_resize_action)) {
+        case RESIZE_DISABLED:
+            if (wgs->font_dpi != dpi_info.y) {
+                deinit_fonts(wgs);
+                init_fonts(wgs, 0, 0);
+            }
+            break;
+        case RESIZE_FONT:
+            resize_font(wgs, term_rect);
+            break;
+        case RESIZE_TERM:
+            resize_term(wgs, term_rect);
+            break;
+        case RESIZE_EITHER:
+            resize_either(wgs, term_rect);
+          break;
+    }
+}
+
+static void change_focused_pane(Pane *pane) {
+    if (focused_pane != pane) {
+        focused_pane = pane;
+        pane_set_focused(pane, true);
+    }
+}
+
+static void adjust_frame_rect_to_client(RECT *rect) {
+    RECT window_rect;
+    GetWindowRect(frame_hwnd, &window_rect);
+    RECT client_rect;
+    GetClientRect(frame_hwnd, &client_rect);
+    int ew = (window_rect.right - window_rect.left) - client_rect.right;
+    int eh = (window_rect.bottom - window_rect.top) - client_rect.bottom;
+    rect->right += ew;
+    rect->bottom += eh;
+}
+
+static void get_frame_client_rect(const RECT *rect, RECT *client_rect) {
+    client_rect->left = 0;
+    client_rect->top = 0;
+    client_rect->right = 0;
+    client_rect->bottom = 0;
+    adjust_frame_rect_to_client(client_rect);
+    client_rect->right = (rect->right - rect->left) - client_rect->right;
+    client_rect->bottom = (rect->bottom - rect->top) - client_rect->bottom;
+}
+
+static void snap_frame_rect_to_possible_term(Pane *pane, RECT *rect, RECT *client_rect, int wmsz) {
+    WinGuiSession *wgs = pane_get_active_session(pane);
+    if (conf_get_int(wgs->conf, CONF_resize_action) == RESIZE_DISABLED) {
+        return;
+    }
+    int ew = 0, eh = 0;
+    RECT term_rect;
+    pane_get_possible_term_rect(pane, client_rect, &term_rect);
+    calculate_term_rect_gaps(wgs, &term_rect, &ew, &eh);
+    if (wmsz == WMSZ_LEFT || wmsz == WMSZ_BOTTOMLEFT || wmsz == WMSZ_TOPLEFT) {
+        rect->left += ew;
+    } else {
+        rect->right -= ew;
+    }
+    if (wmsz == WMSZ_TOP || wmsz == WMSZ_TOPRIGHT || wmsz == WMSZ_TOPLEFT) {
+        rect->top += eh;
+    } else {
+        rect->bottom -= eh;
+    }
+    client_rect->right -= ew;
+    client_rect->bottom -= eh;
+}
+
+static void snap_frame_to_term(Pane *pane) {
+    WinGuiSession *wgs = pane_get_active_session(pane);
+    if (conf_get_int(wgs->conf, CONF_resize_action) == RESIZE_DISABLED) {
+        return;
+    }
+    RECT rect;
+    int border = conf_get_int(wgs->conf, CONF_window_border);
+    rect.right = conf_get_int(wgs->conf, CONF_width) * wgs->font_width + border*2;
+    rect.bottom = conf_get_int(wgs->conf, CONF_height) * wgs->font_height + border*2;
+    rect.left = 0;
+    rect.top = 0;
+    pane_get_requied_rect(pane, &rect, &rect);
+    adjust_frame_rect_to_client(&rect);
+
+    int width = rect.right - rect.left;
+    int height = rect.bottom - rect.top;
+    GetWindowRect(frame_hwnd, &rect);
+    int x = rect.left;
+    int y = rect.top;
+    if (get_workingarea_rect(&rect)) {
+        if (x + width > rect.right) {
+            x = rect.right - width;
+        }
+        if (x < rect.left) {
+            x = rect.left;
+        }
+        if (y + height > rect.bottom) {
+            y = rect.bottom - height;
+        }
+        if (y < rect.top) {
+            y = rect.top;
+        }
+    }
+    SetWindowPos(frame_hwnd, NULL, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
+}
+
+static bool is_scrollbar_visible(Pane *pane, WinGuiSession *wgs) {
+    bool fullscreen = is_fullscr && pane == split_get_pane(root_split);
+    return conf_get_bool(wgs->conf, fullscreen ? CONF_scrollbar_in_fullscreen : CONF_scrollbar);
+}
+
+static void set_term_hwnd_style(Pane *pane, WinGuiSession *wgs) {
+    bool scrollbar = is_scrollbar_visible(pane, wgs);
+    pane_term_hwnd_style(pane, scrollbar, conf_get_bool(wgs->conf, CONF_sunken_edge));
+}
+
+static void flip_full_screen() {
+    skip_update_split_layout = true;
+    if (is_fullscr) {
+        is_fullscr = false;
+        DWORD style = GetWindowLongPtr(frame_hwnd, GWL_STYLE);
+        style |= WS_CAPTION | WS_BORDER | WS_THICKFRAME;
+        SetWindowLong(frame_hwnd, GWL_STYLE, style);
+        SetWindowPos(frame_hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+        Pane *pane = split_get_pane(root_split);
+        if (pane) {
+            set_term_hwnd_style(pane, pane_get_active_session(pane));
+            if (!is_zoomed) {
+                RECT *rect = &fullscr_placement.rcNormalPosition;
+                RECT client_rect;
+                get_frame_client_rect(rect, &client_rect);
+                snap_frame_rect_to_possible_term(pane, rect, &client_rect, WMSZ_BOTTOMRIGHT);
+            }
+        }
+        SetWindowPlacement(frame_hwnd, &fullscr_placement);
+      } else {
+        is_fullscr = true;
+        GetWindowPlacement(frame_hwnd, &fullscr_placement);
+        RECT ss;
+        get_fullscreen_rect(&ss);
+        DWORD style = GetWindowLongPtr(frame_hwnd, GWL_STYLE);
+        style &= ~(WS_CAPTION | WS_BORDER | WS_THICKFRAME);
+        SetWindowLong(frame_hwnd, GWL_STYLE, style);
+        SetWindowPos(frame_hwnd, HWND_TOP, ss.left, ss.top, ss.right - ss.left, ss.bottom - ss.top, SWP_FRAMECHANGED);
+        Pane *pane = split_get_pane(root_split);
+        if (pane) {
+            set_term_hwnd_style(pane, pane_get_active_session(pane));
+        }
+    }
+    skip_update_split_layout = false;
+    RECT client_rect;
+    GetClientRect(frame_hwnd, &client_rect);
+    SendMessage(frame_hwnd, WM_SIZE, fullscr_placement.showCmd == SW_MAXIMIZE ? SIZE_MAXIMIZED : SIZE_RESTORED, MAKELPARAM(client_rect.right, client_rect.bottom));
+
+    check_menu_item(IDM_FULLSCREEN, is_fullscr ? MF_CHECKED : MF_UNCHECKED);
+}
+
+static void check_root_pane_merged() {
+    Pane *root_pane = split_get_pane(root_split);
+    if (root_pane) {
+        if (is_fullscr) {
+            set_term_hwnd_style(root_pane, pane_get_active_session(root_pane));
+        } else if (!is_zoomed) {
+            RECT rect;
+            RECT client_rect;
+            GetWindowRect(frame_hwnd, &rect);
+            GetClientRect(frame_hwnd, &client_rect);
+            snap_frame_rect_to_possible_term(root_pane, &rect, &client_rect, WMSZ_BOTTOMRIGHT);
+            SetWindowPos(frame_hwnd, NULL, 0, 0, rect.right - rect.left, rect.bottom - rect.top, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE);
+        }
+    }
+}
+
+static void root_pane_splitted(Split *old_root_split) {
+    Pane *pane = split_get_pane(old_root_split);
+    if (is_fullscr) {
+        set_term_hwnd_style(pane, pane_get_active_session(pane));
+    }
+}
+
+static bool is_topmost() {
+    return GetWindowLongPtr(frame_hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST;
+}
+
+static void flip_always_on_top() {
+    HWND hwndInsertAfter;
+    if (is_topmost()) {
+        hwndInsertAfter = HWND_NOTOPMOST;
+    } else {
+        hwndInsertAfter = HWND_TOPMOST;
+    }
+    SetWindowPos(frame_hwnd, hwndInsertAfter, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+    check_menu_item(IDM_ALWAYSONTOP, is_topmost() ? MF_CHECKED : MF_UNCHECKED);
+}
+
+static void update_split_layout(const RECT *rect) {
+    if (skip_update_split_layout) {
+      return;
+    }
+    if (rect->right == split_layout_rect.right &&
+        rect->bottom == split_layout_rect.bottom &&
+        rect->left == split_layout_rect.left &&
+        rect->top == split_layout_rect.top) {
+        return;
+    }
+    split_layout_rect = *rect;
+    split_plan_layout(root_split, rect);
+    split_apply_layout(root_split);
+}
+
+static void resize_backends(Split *split) {
+    Pane *pane = split_get_pane(split);
+    if (pane) {
+        WinGuiSession *wgs = pane_get_active_session(pane);
+        if (wgs->need_backend_resize) {
+            term_size(wgs->term, wgs->backend_rows, wgs->backend_cols,
+                                 conf_get_int(wgs->conf, CONF_savelines));
+            refresh_find_match_mask(wgs);
+            InvalidateRect(pane_get_term_hwnd(pane), NULL, TRUE);
+            wgs->need_backend_resize = false;
+        }
+        return;
+    }
+    resize_backends(split_get_first(split));
+    resize_backends(split_get_second(split));
+}
+
+static Pane *merge_split(Split *split) {
+    Pane *focused_pane_copy = focused_pane;
+    focused_pane = NULL;
+    Pane *deleted_pane = split_merge(split);
+    focused_pane = focused_pane_copy;
+    return deleted_pane;
+}
+
+void handle_splitter_notify(NMHDR *hdr) {
+    switch (hdr->code) {
+      case SPLITTER_NOTIFY_MERGE: {
+        Split *split = split_get_from_hwnd(hdr->hwndFrom);
+        Pane *first = split_get_pane(split_get_first(split));
+        Pane *second = split_get_pane(split_get_second(split));
+        int first_new_index = pane_get_session_count(first) + pane_get_active_session_index(second);
+        int second_count = pane_get_session_count(second);
+        Pane *deleted_pane = merge_split(split);
+        if (focused_pane == deleted_pane) {
+            if (deleted_pane == second) {
+                if (second_count > 0) {
+                    activate_session(first, first_new_index);
+                }
+                change_focused_pane(first);
+            } else {
+                change_focused_pane(second);
+            }
+        }
+        check_root_pane_merged();
+        break;
+      }
+      case SPLITTER_NOTIFY_ENTER_DRAG: {
+        resizing = true;
+        break;
+      }
+      case SPLITTER_NOTIFY_EXIT_DRAG: {
+        resizing = false;
+        resize_backends(split_get_from_hwnd(hdr->hwndFrom));
+        break;
+      }
+    }
+}
+
+static LRESULT CALLBACK frame_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+    switch (message) {
+      case WM_CLOSE:
+        show_mouseptr(pane_get_active_session(focused_pane), true);
+        char *title = dupprintf("%s Exit Confirmation", appname);
+        int ret = MessageBox(hwnd, "Are you sure you want to close All sessions?", title,
+                        MB_ICONWARNING | MB_OKCANCEL | MB_DEFBUTTON1);
+        sfree(title);
+        if (ret != IDOK) {
+            return 0;
+        }
+        SetFocus(NULL);
+        DestroyWindow(hwnd);
+        return 0;
+      case WM_DESTROY:
+        destroy_sessions(root_split);
+        split_destroy(root_split);
+        find_match_mask_free(&find_match_mask);
+        DeleteObject(tab_bar_font);
+        PostQuitMessage(0);
+        return 0;
+      case WM_SIZE: {
+        if (wparam == SIZE_MINIMIZED) {
+            is_minimized = true;
+            is_zoomed = false;
+            handle_minimised_change();
+            return 0;
+        } else if (wparam == SIZE_MAXIMIZED) {
+            if (is_minimized) {
+                is_minimized = false;
+                handle_minimised_change();
+            }
+            is_zoomed = true;
+        } else if (wparam == SIZE_RESTORED) {
+            if (is_minimized) {
+                is_minimized = false;
+                handle_minimised_change();
+            }
+            if (is_zoomed) {
+                is_zoomed = false;
+                Pane *pane = split_get_pane(root_split);
+                if (pane) {
+                    RECT rect;
+                    RECT client_rect = {0, 0, LOWORD(lparam), HIWORD(lparam)};
+                    WinGuiSession *wgs = pane_get_active_session(pane);
+                    GetWindowRect(frame_hwnd, &rect);
+                    if (conf_get_int(wgs->conf, CONF_resize_action) == RESIZE_EITHER) {
+                        wgs->resize_either.alt_pressed = is_alt_pressed();
+                    }
+                    snap_frame_rect_to_possible_term(pane, &rect, &client_rect, WMSZ_BOTTOMRIGHT);
+                    assert(!skip_update_split_layout);
+                    skip_update_split_layout = true;
+                    SetWindowPos(frame_hwnd, NULL, 0, 0, rect.right - rect.left, rect.bottom - rect.top, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE);
+                    skip_update_split_layout = false;
+                    update_split_layout(&client_rect);
+                    return 0;
+                }
+            }
+        }
+        RECT rect = {0, 0, LOWORD(lparam), HIWORD(lparam)};
+        if (resizing) {
+            if (rect.right != split_layout_rect.right ||
+                rect.bottom != split_layout_rect.bottom ||
+                rect.left != split_layout_rect.left ||
+                rect.top != split_layout_rect.top) {
+                split_plan_layout(root_split, &rect);
+                split_layout_rect = rect;
+            }
+            split_apply_layout(root_split);
+            split_move_sizetips(root_split);
+        } else {
+            update_split_layout(&rect);
+        }
+        return 0;
+      }
+      case WM_DRAWITEM:
+        return SendMessage(((DRAWITEMSTRUCT *)lparam)->hwndItem, WM_DRAWITEM, wparam, lparam);
+      case WM_NOTIFY: {
+        switch (((NMHDR *)lparam)->idFrom) {
+        case SPLITTER_NOTIFY_ID:
+            handle_splitter_notify((NMHDR *)lparam);
+            return 0;
+        case TAB_BAR_NOTIFY_ID:
+            handle_tab_bar_notify((TabBarNotify *)lparam);
+            return 0;
+        case FINDDLG_NOTIFY_ID:
+            handle_finddlg_notify((NMHDR *)lparam);
+            return 0;
+        }
+        break;
+      }
+      case WM_MOUSEMOVE:
+        handle_wm_mouse_move(wparam, lparam);
+        return 0;
+      case WM_NCMOUSEMOVE:
+        handle_wm_ncmouse_move(wparam, lparam);
+        return 0;
+      case WM_DPICHANGED: {
+        RECT *rect = (RECT *)lparam;
+        dpi_info.x = LOWORD(wparam);
+        dpi_info.y = HIWORD(wparam);
+        DeleteObject(tab_bar_font);
+        tab_bar_font = get_dpi_aware_tab_bar_font();
+        tab_bar_common_dpi_changed(tab_bar_font);
+        size_tip_common_dpi_changed(tab_bar_font);
+        split_common_dpi_changed();
+        split_dpi_changed(root_split);
+        SetWindowPos(hwnd, NULL, rect->left, rect->top, rect->right - rect->left, rect->bottom - rect->top, SWP_NOZORDER | SWP_NOACTIVATE);
+        return 0;
+      }
+      case WM_MOVE:
+        split_pin_layout(root_split);
+        return 0;
+      case WM_ACTIVATE:
+        if (wparam == WA_CLICKACTIVE) {
+            DWORD message_pos = GetMessagePos();
+            POINT point = { GET_X_LPARAM(message_pos), GET_Y_LPARAM(message_pos) };
+            ScreenToClient(frame_hwnd, &point);
+            Split *split = split_get_from_point(root_split, &point);
+            if (split) {
+                focused_pane = split_get_pane(split);
+            }
+        }
+        return 0;
+      case WM_SETFOCUS:
+        if(focused_pane){
+            pane_set_focused(focused_pane, true);
+        }
+        return 0;
+      case WM_KILLFOCUS:
+        return 0;
+      case WM_ENTERSIZEMOVE:
+        resizing = true;
+        return 0;
+      case WM_SIZING: {
+        RECT *rect = (RECT *)lparam;
+        RECT client_rect;
+        get_frame_client_rect(rect, &client_rect);
+        Pane *pane = split_get_pane(root_split);
+        if (pane) {
+            WinGuiSession *wgs = pane_get_active_session(pane);
+            if (conf_get_int(wgs->conf, CONF_resize_action) == RESIZE_EITHER) {
+              wgs->resize_either.alt_pressed = is_alt_pressed();
+            }
+            snap_frame_rect_to_possible_term(pane, rect, &client_rect, wparam);
+        }
+        split_layout_rect = client_rect;
+        split_plan_layout(root_split, &client_rect);
+        split_update_sizetips(root_split);
+        return TRUE;
+      }
+      case WM_EXITSIZEMOVE:
+        resizing = false;
+        split_hide_sizetips(root_split);
+        resize_backends(root_split);
+        return 0;
+      case WM_SYSCOMMAND:
+        switch (wparam & ~0xF) {
+          case SC_MOUSEMENU:
+            show_mouseptr(pane_get_active_session(focused_pane), true);
+            break;
+          case SC_KEYMENU:
+            show_mouseptr(pane_get_active_session(focused_pane), true);
+            if (lparam == 0) {
+                PostMessage(hwnd, WM_CHAR, ' ', 0);
+            }
+            break;
+        }
+        break;
+      case WM_NETEVENT:
+      case WM_DONE_WITH_SOCKET:
+        winselgui_response(message, wparam, lparam);
+        return 0;
+      case WM_PALETTECHANGED:
+      case WM_QUERYNEWPALETTE:
+      case WM_INPUTLANGCHANGE:
+      case WM_SYSCOLORCHANGE:
+        message_term_hwnds(root_split, message, wparam, lparam);
+        break;
+    }
+    return DefWindowProcW(hwnd, message, wparam, lparam);
+}
+
 static void register_frame_class() {
     WNDCLASSW wndclass;
 
     wndclass.style = 0;
-    wndclass.lpfnWndProc = WndProc;
+    wndclass.lpfnWndProc = frame_proc;
     wndclass.cbClsExtra = 0;
     wndclass.cbWndExtra = 0;
     wndclass.hInstance = hinst;
-    wndclass.hIcon = LoadIcon(hinst, MAKEINTRESOURCE(IDI_MAINICON));
+    wndclass.hIcon = LoadIcon(NULL, MAKEINTRESOURCE(IDI_MAINICON));
     wndclass.hCursor = LoadCursor(NULL, MAKEINTRESOURCE(IDC_ARROW));
     wndclass.hbrBackground = NULL;
     wndclass.lpszMenuName = NULL;
@@ -18,52 +729,13 @@ static void register_frame_class() {
     RegisterClassW(&wndclass);
 }
 
-static HWND create_frame_window(Conf *conf, int guess_width, int guess_height) {
-    int winmode = WS_OVERLAPPEDWINDOW | WS_VSCROLL;
-    int exwinmode = 0;
-    const struct BackendVtable *vt =
-        backend_vt_from_proto(be_default_protocol);
-    bool resize_forbidden = false;
-    if (vt && vt->flags & BACKEND_RESIZE_FORBIDDEN)
-        resize_forbidden = true;
-    if (!conf_get_bool(conf, CONF_scrollbar))
-        winmode &= ~(WS_VSCROLL);
-    if (conf_get_int(conf, CONF_resize_action) == RESIZE_DISABLED ||
-        resize_forbidden)
-        winmode &= ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
-    if (conf_get_bool(conf, CONF_alwaysontop))
-        exwinmode |= WS_EX_TOPMOST;
-    if (conf_get_bool(conf, CONF_sunken_edge))
-        exwinmode |= WS_EX_CLIENTEDGE;
+static void create_frame_window() {
     wchar_t *uappname = dup_mb_to_wc(DEFAULT_CODEPAGE, appname);
-    HWND hwnd = CreateWindowExW(
-        exwinmode, uappname, uappname, winmode, CW_USEDEFAULT,
-        CW_USEDEFAULT, guess_width, guess_height, NULL, NULL, hinst, NULL);
+    frame_hwnd = CreateWindowExW(0, uappname, uappname,
+      WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
+      CW_USEDEFAULT, CW_USEDEFAULT,
+      NULL, NULL, hinst, NULL);
     sfree(uappname);
-    return hwnd;
-}
-
-static void adjust_terminal_window(HWND frame_hwnd, HWND term_hwnd) {
-    RECT r;
-    GetClientRect(frame_hwnd, &r);
-    SetWindowPos(term_hwnd, NULL, tab_bar_get_extra_width(), tab_bar_get_extra_height(),
-                 r.right-r.left-tab_bar_get_extra_width(), r.bottom-r.top-tab_bar_get_extra_height(), SWP_NOZORDER);
-}
-
-static void adjust_extra_size() {
-    extra_width += tab_bar_get_extra_width();
-    extra_height += tab_bar_get_extra_height();
-}
-
-static void adjust_client_size(int *width, int *height) {
-    *width -= tab_bar_get_extra_width();
-    *height -= tab_bar_get_extra_height();
-    if (*width < 0) {
-      *width = 0;
-    }
-    if (*height < 0) {
-      *height = 0;
-    }
 }
 
 static bool create_conf(const char *saved_session, Conf **conf, const char **session_name) {
@@ -96,7 +768,7 @@ static void term_palette_init_fix(Terminal *term)
     }
 }
 
-static WinGuiSession *create_frontend(Conf *conf, const char *session_name) {
+static WinGuiSession *create_session(Conf *conf, const char *session_name) {
     WinGuiSession *wgs = (WinGuiSession *)smalloc(sizeof(WinGuiSession));
 
     memset(wgs, 0, sizeof(*wgs));
@@ -116,7 +788,6 @@ static WinGuiSession *create_frontend(Conf *conf, const char *session_name) {
     wgs->compose_state = 0;
     wgs->termwin.vt = &windows_termwin_vt;
     wgs->wintw_hdc = NULL;
-    wgs->term_hwnd = term_hwnd;
     wgs->trust_icon = INVALID_HANDLE_VALUE,
     wgs->eventlogstuff.ninitial = 0;
     wgs->eventlogstuff.ncircular = 0;
@@ -135,7 +806,7 @@ static WinGuiSession *create_frontend(Conf *conf, const char *session_name) {
 
     memset(&wgs->ucsdata, 0, sizeof(wgs->ucsdata));
     conf_cache_data(wgs);
-    init_fonts(wgs, 0,0);
+    init_fonts(wgs, 0, 0);
     init_palette(wgs);
 
     wgs->term_palette_init = true;
@@ -148,9 +819,7 @@ static WinGuiSession *create_frontend(Conf *conf, const char *session_name) {
     setup_clipboards(term, conf);
     wgs->logctx = log_init(&wgs->logpolicy, conf);
     term_provide_logctx(term, wgs->logctx);
-    term_size(term, conf_get_int(conf, CONF_height),
-              conf_get_int(conf, CONF_width),
-              conf_get_int(conf, CONF_savelines));
+    init_term_dimensions(wgs);
 
     char *bits;
     int size = (wgs->font_width + 15) / 16 * 2 * wgs->font_height;
@@ -170,7 +839,7 @@ static WinGuiSession *create_frontend(Conf *conf, const char *session_name) {
     return wgs;
 }
 
-static void destroy_frontend(WinGuiSession *wgs) {
+static void destroy_session(WinGuiSession *wgs) {
     DeleteObject(wgs->caretbm);
 
     sfree(wgs->find.pattern);
@@ -192,6 +861,25 @@ static void destroy_frontend(WinGuiSession *wgs) {
     sfree(wgs);
 }
 
+static void destroy_sessions(Split *split) {
+    Pane *pane = split_get_pane(split);
+    if (pane) {
+        for (int i=0; i<pane_get_session_count(pane); i++) {
+            WinGuiSession *wgs = (WinGuiSession *)pane_get_session(pane, i);
+            if (wgs->backend) {
+                stop_backend(wgs);
+            }
+            if (wgs->remote_closed) {
+                delete_callbacks_for_context(wgs);
+            }
+            destroy_session(wgs);
+        }
+    } else {
+        destroy_sessions(split_get_first(split));
+        destroy_sessions(split_get_second(split));
+    }
+}
+
 static void set_title_from_session(WinGuiSession *wgs) {
     if (conf_get_bool(wgs->conf, CONF_win_name_always) || !IsIconic(frame_hwnd))
         SetWindowTextW(frame_hwnd, wgs->window_name);
@@ -200,91 +888,6 @@ static void set_title_from_session(WinGuiSession *wgs) {
 static void set_icon_title_from_session(WinGuiSession *wgs) {
     if (!conf_get_bool(wgs->conf, CONF_win_name_always) && IsIconic(frame_hwnd))
         SetWindowTextW(frame_hwnd, wgs->icon_name);
-}
-
-/* Calling of wintw_set_scrollbar() is connected to drawing in term_update() in terminal.c
-   This means if scroll info has changed till session is not active we don't get the
-   about the new status.
-   At activation we need to calculate it based on the Terminal data, but the
-   update_sbar() function doing this is static.
-   As a workaround the original handling is copied here. */
-static void update_sbar(Terminal *term) {
-    term->win_scrollbar_update_pending = false;
-    int sblines = count234(term->scrollback);
-    if (term->erase_to_scrollback &&
-        term->alt_which && term->alt_screen) {
-            sblines += term->alt_sblines;
-    }
-    wintw_set_scrollbar(term->win, sblines + term->rows,
-                        sblines + term->disptop, term->rows);
-}
-
-static void set_scrollbar(int total, int start, int page, bool redraw) {
-    SCROLLINFO si;
-    si.cbSize = sizeof(si);
-    si.fMask = SIF_ALL | SIF_DISABLENOSCROLL;
-    si.nMin = 0;
-    si.nMax = total - 1;
-    si.nPage = page;
-    si.nPos = start;
-    SetScrollInfo(frame_hwnd, SB_VERT, &si, redraw);
-}
-
-static bool set_frame_style(Conf *conf) {
-    HWND hwnd = frame_hwnd;
-    HWND hwndInsertAfter = NULL;
-    LONG nflg, flag = GetWindowLongPtr(hwnd, GWL_STYLE);
-    LONG nexflag, exflag = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
-
-    nexflag = exflag;
-    if (conf_get_bool(conf, CONF_alwaysontop) !=
-        (exflag & WS_EX_TOPMOST)) {
-      if (conf_get_bool(conf, CONF_alwaysontop)) {
-        nexflag |= WS_EX_TOPMOST;
-        hwndInsertAfter = HWND_TOPMOST;
-      } else {
-        nexflag &= ~(WS_EX_TOPMOST);
-        hwndInsertAfter = HWND_NOTOPMOST;
-      }
-    }
-    if (conf_get_bool(conf, CONF_sunken_edge))
-        nexflag |= WS_EX_CLIENTEDGE;
-    else
-        nexflag &= ~(WS_EX_CLIENTEDGE);
-
-    nflg = flag;
-    if (conf_get_bool(conf, is_full_screen() ?
-                      CONF_scrollbar_in_fullscreen :
-                      CONF_scrollbar))
-        nflg |= WS_VSCROLL;
-    else
-        nflg &= ~WS_VSCROLL;
-
-    if (conf_get_int(conf, CONF_resize_action) == RESIZE_DISABLED ||
-        is_full_screen())
-        nflg &= ~WS_THICKFRAME;
-    else
-        nflg |= WS_THICKFRAME;
-
-    if (conf_get_int(conf, CONF_resize_action) == RESIZE_DISABLED)
-        nflg &= ~WS_MAXIMIZEBOX;
-    else
-        nflg |= WS_MAXIMIZEBOX;
-
-    if (nflg != flag || nexflag != exflag) {
-      if (nflg != flag)
-          SetWindowLongPtr(hwnd, GWL_STYLE, nflg);
-      if (nexflag != exflag)
-          SetWindowLongPtr(hwnd, GWL_EXSTYLE, nexflag);
-
-      SetWindowPos(hwnd, hwndInsertAfter, 0, 0, 0, 0,
-                   SWP_NOACTIVATE | SWP_NOCOPYBITS |
-                   SWP_NOMOVE | SWP_NOSIZE |
-                   (hwndInsertAfter ? SWP_NOZORDER : 0) |
-                   SWP_FRAMECHANGED);
-      return true;
-    }
-    return false;
 }
 
 static void realize_palette(WinGuiSession *wgs) {
@@ -326,110 +929,112 @@ static void realize_palette(WinGuiSession *wgs) {
     }
 }
 
-static void activate_session(WinGuiSession *wgs) {
-    tab_bar_clear_tab_notified(wgs->tab_index);
-    tab_bar_select_tab(wgs->tab_index);
-    wgs_active = wgs;
+static void activate_session(Pane *pane, int index) {
+    WinGuiSession *wgs = pane_get_active_session(pane);
+    if (wgs && wgs->term->has_focus) {
+        term_set_focus(wgs->term, false);
+    }
+    pane_clear_active_session(pane);
+    set_term_hwnd_style(pane, pane_get_session(pane, index));
+    pane_select_session(pane, index);
+
+    wgs = pane_get_active_session(pane);
+    if (focused_pane == pane && !wgs->term->has_focus) {
+        term_set_focus(wgs->term, true);
+    }
     wgs->find.update_finddlg_pending = true;
     realize_palette(wgs);
-    int resize_action = conf_get_int(wgs->conf, CONF_resize_action);
-    bool was_zoomed = wgs->resize_either.was_zoomed;
-    if (wgs->font_dpi != dpi_info.y) {
-        deinit_fonts(wgs);
-        init_fonts(wgs, 0, 0);
-    }
 
-    if (IsZoomed(frame_hwnd)) {
-        if (!was_zoomed) {
-            wgs->resize_either.was_zoomed = true;
-            wgs->resize_either.font_width = wgs->font_width;
-            wgs->resize_either.font_height = wgs->font_height;
-        }
-        if (resize_action == RESIZE_DISABLED) {
-            ShowWindow(frame_hwnd, SW_RESTORE);
-            force_normal(frame_hwnd);
-            reset_window(wgs, -1);
-        } else {
-            if (resize_action == RESIZE_EITHER && !was_zoomed) {
-                WINDOWPLACEMENT wp;
-                wp.length = sizeof(WINDOWPLACEMENT);
-                GetWindowPlacement(frame_hwnd, &wp);
-                int width = wp.rcNormalPosition.right-wp.rcNormalPosition.left-extra_width+tab_bar_get_extra_width();
-                int height = wp.rcNormalPosition.bottom-wp.rcNormalPosition.top-extra_height+tab_bar_get_extra_height();
-                wm_size_resize_term(wgs, MAKELPARAM(width, height));
-            }
-            reset_window(wgs, 0);
-            InvalidateRect(wgs->term_hwnd, NULL, true);
-        }
-    } else {
-        wgs->resize_either.was_zoomed = false;
-        if (resize_action == RESIZE_DISABLED) {
-            reset_window(wgs, 1);
-        } else if (resize_action == RESIZE_FONT) {
-            reset_window(wgs, 0);
-            InvalidateRect(wgs->term_hwnd, NULL, true);
-        } else {
-            if (resize_action == RESIZE_EITHER && was_zoomed) {
-                deinit_fonts(wgs);
-                init_fonts(wgs, wgs->resize_either.font_width, wgs->resize_either.font_height);
-            }
-            RECT r;
-            GetClientRect(frame_hwnd, &r);
-            wm_size_resize_term(wgs, MAKELPARAM(r.right-r.left, r.bottom-r.top));
-            reset_window(wgs, 1);
-        }
+    if (conf_get_int(wgs->conf, CONF_resize_action) == RESIZE_EITHER) {
+        wgs->resize_either.activate = true;
     }
-    set_frame_style(wgs->conf);
+    RECT term_rect;
+    pane_get_term_rect(pane, &term_rect);
+    resize_term_dimensions(wgs, &term_rect);
+    InvalidateRect(pane_get_term_hwnd(pane), NULL, TRUE);
+
     set_title_from_session(wgs);
     set_icon_title_from_session(wgs);
-    update_sbar(wgs->term);
+    term_update_sbar(wgs->term);
     update_mouse_pointer(wgs);
     reseteventlog(&wgs->eventlogstuff);
     update_finddlg(wgs);
 }
 
-static char *create_tab_title(int id, const char *session_name) {
+static char *create_session_title(int id, const char *session_name) {
     return dupprintf("%d. %s", id, session_name);
 }
 
-static void add_session_tab(int protocol, const char *session_name, int index) {
-    char *tab_title = create_tab_title(session_counter, session_name);
-    tab_bar_insert_tab(index, tab_title, protocol);
-    sfree(tab_title);
-}
-
-static void add_session(Conf *conf, const char *session_name, int index) {
+static WinGuiSession *add_stale_session(Pane *pane, Conf *conf, const char *session_name, int index) {
     if (!session_name) {
         session_name = dupstr(conf_get_str(conf, CONF_host));
     }
-    add_session_tab(conf_get_int(conf, CONF_protocol), session_name, index);
-    WinGuiSession *wgs = create_frontend(conf, session_name);
-    pointer_array_insert(index, wgs);
-    activate_session(wgs);
+    char *title = create_session_title(session_counter, session_name);
+    WinGuiSession *wgs = create_session(conf, session_name);
+    pane_insert_session(pane, index, title, conf_get_int(conf, CONF_protocol), wgs);
+    session_set_pane(wgs, pane);
+    sfree(title);
+    return wgs;
+}
+
+static void add_session(Pane *pane, Conf *conf, const char *session_name, int index) {
+    WinGuiSession *wgs = add_stale_session(pane, conf, session_name, index);
+    activate_session(pane, index);
     start_backend(wgs);
 }
 
-static void delete_session(WinGuiSession *wgs) {
-    int deleted_index = wgs->tab_index;
-    int index = wgs_active->tab_index;
-    if (pointer_array_size() > 1 && index == deleted_index) {
-        if (index+1 == pointer_array_size()) {
-            index--;
+static int delete_session(Pane *pane, int index) {
+    WinGuiSession *wgs = pane_get_session(pane, index);
+    int new_index = pane_delete_session(pane, index);
+    if (new_index >= 0) {
+      activate_session(pane, new_index);
+    }
+    destroy_session(wgs);
+    if (pane_get_session_count(pane) == 0) {
+        Split *split = split_find_parent(root_split, pane);
+        if (split) {
+            Pane *deleted_pane = merge_split(split);
+            if (focused_pane == deleted_pane) {
+                change_focused_pane(split_find_pane(split));
+            }
+            check_root_pane_merged();
         } else {
-            index++;
+            DestroyWindow(frame_hwnd);
         }
-        activate_session((WinGuiSession *)pointer_array_get(index));
     }
-    tab_bar_remove_tab(deleted_index);
-    pointer_array_remove(deleted_index);
-    if (pointer_array_size() == 0) {
-        SetFocus(NULL);
+    return new_index;
+}
+
+static void close_session(Pane *pane, int index) {
+    WinGuiSession *wgs = pane_get_session(pane, index);
+    if (!wgs->remote_closed && conf_get_bool(wgs->conf, CONF_warn_on_close)) {
+        if (pane_get_active_session_index(pane) != index) {
+            activate_session(pane, index);
+        }
+        show_mouseptr(pane_get_active_session(focused_pane), true);
+        char *title, *msg, *additional = NULL;
+        title = dupprintf("%s Session Close Confirmation", appname);
+        if (wgs->backend && wgs->backend->vt->close_warn_text) {
+            additional = wgs->backend->vt->close_warn_text(wgs->backend);
+        }
+        msg = dupprintf("Are you sure you want to close this session?%s%s",
+                        additional ? "\n" : "",
+                        additional ? additional : "");
+        int ret = MessageBox(frame_hwnd, msg, title, MB_ICONWARNING | MB_OKCANCEL | MB_DEFBUTTON1);
+        sfree(title);
+        sfree(msg);
+        sfree(additional);
+        if (ret != IDOK) {
+            return;
+        }
     }
-    destroy_frontend(wgs);
-    if (pointer_array_size() == 0) {
-        wgs_active = NULL;
-        DestroyWindow(frame_hwnd);
+    if (wgs->backend) {
+        stop_backend(wgs);
     }
+    if (wgs->remote_closed) {
+        delete_callbacks_for_context(wgs);
+    }
+    delete_session(pane, index);
 }
 
 static void show_finddlg(WinGuiSession *wgs) {
@@ -440,12 +1045,12 @@ static void show_finddlg(WinGuiSession *wgs) {
         wgs->find.pattern_len = 0;
         wgs->find.pattern[0] = 0;
     }
-    finddlg_create(wgs->find.pattern, true, wgs->find.ignore_case, wgs->find.whole_word);
+    pane_show_finddlg(focused_pane, wgs->find.pattern, true, wgs->find.ignore_case, wgs->find.whole_word);
 }
 
 static void update_finddlg(WinGuiSession *wgs) {
     if (wgs->find.pattern) {
-        finddlg_create(wgs->find.pattern, false, wgs->find.ignore_case, wgs->find.whole_word);
+        pane_show_finddlg(focused_pane, wgs->find.pattern, false, wgs->find.ignore_case, wgs->find.whole_word);
         if (wgs->find.pattern_len > 1) {
             find_match_mask_alloc(&find_match_mask, wgs->term->rows, wgs->term->cols);
             find_display(wgs->term, wgs->find.pattern, wgs->find.pattern_len, wgs->find.ignore_case, wgs->find.whole_word, &find_match_mask);
@@ -454,7 +1059,7 @@ static void update_finddlg(WinGuiSession *wgs) {
         }
     } else {
         find_match_mask_free(&find_match_mask);
-        finddlg_destroy();
+        pane_hide_finddlg(focused_pane);
     }
     wgs->find.update_finddlg_pending = false;
 }
@@ -484,7 +1089,7 @@ static void update_find_pattern(WinGuiSession *wgs, int l) {
         wgs->find.pattern = snewn(buffer_len, wchar_t);
         wgs->find.pattern_buffer_len = buffer_len;
     }
-    wgs->find.pattern_len = finddlg_get_text(wgs->find.pattern, wgs->find.pattern_buffer_len);
+    wgs->find.pattern_len = pane_get_finddlg_text(wgs->pane, wgs->find.pattern, wgs->find.pattern_buffer_len);
     assert(wgs->find.pattern_len == l);
 }
 
@@ -495,10 +1100,12 @@ static void scroll_to_row(WinGuiSession *wgs, int row) {
     term_update(wgs->term);
 }
 
-static void handle_finddlg_notify(LPARAM lParam) {
-    switch (((NMHDR *)lParam)->code) {
+static void handle_finddlg_notify(NMHDR *hdr) {
+    Pane *pane = pane_get_from_finddlg_hwnd(hdr->hwndFrom);
+    WinGuiSession *wgs_active = pane_get_active_session(pane);
+    switch (hdr->code) {
       case FINDDLG_EDIT_CHANGED: {
-        int l = finddlg_get_text(NULL, 0);
+        int l = pane_get_finddlg_text(pane, NULL, 0);
         update_find_pattern(wgs_active, l);
         if (l > 1) {
             update_find_match_mask(wgs_active);
@@ -508,14 +1115,14 @@ static void handle_finddlg_notify(LPARAM lParam) {
         break;
       }
       case FINDDLG_IGNORE_CASE: {
-        wgs_active->find.ignore_case = finddlg_get_ignore_case();
+        wgs_active->find.ignore_case = pane_get_finddlg_ignore_case(pane);
         if (find_match_mask.cells) {
             update_find_match_mask(wgs_active);
         }
         break;
       }
       case FINDDLG_WHOLE_WORD: {
-        wgs_active->find.whole_word = finddlg_get_whole_word();
+        wgs_active->find.whole_word = pane_get_finddlg_whole_word(pane);
         if (find_match_mask.cells) {
             update_find_match_mask(wgs_active);
         }
@@ -552,7 +1159,6 @@ static void handle_finddlg_notify(LPARAM lParam) {
         break;
       }
       case FINDDLG_CLOSE: {
-        finddlg_destroy();
         sfree(wgs_active->find.pattern);
         wgs_active->find.pattern = NULL;
         wgs_active->find.pattern_buffer_len = 0;
@@ -565,75 +1171,115 @@ static void handle_finddlg_notify(LPARAM lParam) {
     }
 }
 
-static void handle_wm_notify(LPARAM lParam) {
-    if (((NMHDR *)lParam)->idFrom == FINDDLG_NOTIFY_ID) {
-        handle_finddlg_notify(lParam);
-        return;
-    }
-    struct TBHDR *nmhdr = (struct TBHDR *)lParam;
-    int index = tab_bar_get_current_tab();
-    switch (nmhdr->_hdr.code) {
+static void handle_tab_bar_notify(TabBarNotify *notify) {
+    Pane *pane = pane_get_from_tab_bar_hwnd(notify->hdr.hwndFrom);
+    switch (notify->hdr.code) {
       case TCN_SELCHANGE: {
-        activate_session((WinGuiSession *)pointer_array_get(index));
+        activate_session(pane, pane_get_active_session_index(pane));
         break;
       }
       case TCN_TABEXCHANGE: {
-        pointer_array_exchange(nmhdr->_tabOrigin, index);
+        pane_sessions_exchanged(pane, notify->tab_origin, pane_get_active_session_index(pane));
         break;
       }
       case TCN_TABDELETE: {
-        WinGuiSession *wgs = (WinGuiSession *)pointer_array_get(nmhdr->_tabOrigin);
-        if (!wgs->remote_closed && conf_get_bool(wgs->conf, CONF_warn_on_close)) {
-            if (index != nmhdr->_tabOrigin) {
-                index = nmhdr->_tabOrigin;
-                activate_session(wgs);
-            }
-            show_mouseptr(wgs, true);
-            char *title, *msg, *additional = NULL;
-            title = dupprintf("%s Session Close Confirmation", appname);
-            if (wgs->backend && wgs->backend->vt->close_warn_text) {
-                additional = wgs->backend->vt->close_warn_text(wgs->backend);
-            }
-            msg = dupprintf("Are you sure you want to close this session?%s%s",
-                            additional ? "\n" : "",
-                            additional ? additional : "");
-            int ret = MessageBox(frame_hwnd, msg, title, MB_ICONWARNING | MB_OKCANCEL | MB_DEFBUTTON1);
-            sfree(title);
-            sfree(msg);
-            sfree(additional);
-            if (ret != IDOK) {
-                break;
-            }
-        }
-        if (wgs->backend) {
-            stop_backend(wgs);
-        }
-        if (wgs->remote_closed) {
-            delete_callbacks_for_context(wgs);
-        }
-        delete_session(wgs);
+        close_session(pane, notify->tab_origin);
         break;
       }
-      case NM_RCLICK:
-      {
+      case NM_CLICK:
+        change_focused_pane(pane_get_from_tab_bar_hwnd(notify->hdr.hwndFrom));
+        break;
+      case NM_RCLICK: {
         POINT cursorpos;
-
-        show_mouseptr(wgs_active, true);
+        Pane *pane = pane_get_from_tab_bar_hwnd(notify->hdr.hwndFrom);
+        change_focused_pane(pane);
         GetCursorPos(&cursorpos);
         TrackPopupMenu(popup_menus[SYSMENU].menu,
                        TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON,
                        cursorpos.x, cursorpos.y,
-                       0, frame_hwnd, NULL);
+                       0, pane_get_term_hwnd(pane), NULL);
+        break;
+      }
+      case TCN_OUTSIDE_DRAG: {
+        POINT point = notify->point;
+        ClientToScreen(notify->hdr.hwndFrom, &point);
+        ScreenToClient(frame_hwnd, &point);
+        Split *split = split_get_from_point(root_split, &point);
+        if (!split) {
+            split_marker_hide();
+            break;
+        }
+        bool self_split = split_get_pane(split) == pane;
+        RECT rect;
+        SplitType type = split_get_possible_split_rect(split, self_split, &point, &rect);
+        if (self_split && (type == SPLIT_TYPE_PANE || pane_get_session_count(pane) == 1)) {
+            split_marker_hide();
+            break;
+        }
+        split_marker_show(&rect);
+        break;
+      }
+      case TCN_OUTSIDE_CANCEL:
+        split_marker_hide();
+        break;
+      case TCN_OUTSIDE_RELEASE:
+      {
+        split_marker_hide();
+        POINT point = notify->point;
+        ClientToScreen(notify->hdr.hwndFrom, &point);
+        ScreenToClient(frame_hwnd, &point);
+        Split *target_split = split_get_from_point(root_split, &point);
+        if (!target_split) {
+            break;
+        }
+        Pane *source_pane = pane;
+        bool self_split = split_get_pane(target_split) == source_pane;
+        SplitPart part;
+        SplitType type = split_get_possible_split(target_split, self_split, &point, &part);
+        if (self_split && (type == SPLIT_TYPE_PANE || pane_get_session_count(source_pane) == 1)) {
+            break;
+        }
+        int source_index = pane_get_active_session_index(pane);
+        bool source_active = pane_get_active_session_index(source_pane) == source_index;
+        Pane *root_pane = split_get_pane(root_split);
+        if (type != SPLIT_TYPE_PANE) {
+            if (source_active) {
+                pane_clear_active_session(source_pane);
+            }
+            split_split(target_split, type, part);
+            target_split = (part == SPLIT_PART_FIRST ? split_get_first(target_split) : split_get_second(target_split));
+        }
+        Pane *target_pane = split_get_pane(target_split);
+        int target_index = pane_import_session(target_pane, source_pane, source_index);
+        session_set_pane(pane_get_session(target_pane, target_index), target_pane);
+        int source_selected_index = pane_delete_session(source_pane, source_index);
+        if (source_selected_index >= 0) {
+            activate_session(source_pane, source_selected_index);
+        }
+        if (source_active || target_index == 0) {
+            activate_session(target_pane, target_index);
+        }
+        if (pane_get_session_count(source_pane) == 0) {
+            Pane *deleted_pane = merge_split(split_find_parent(root_split, source_pane));
+            assert(deleted_pane == source_pane);
+            if (focused_pane == deleted_pane) {
+                change_focused_pane(target_pane);
+            }
+            check_root_pane_merged();
+        } else {
+            if (root_pane && self_split) {
+                root_pane_splitted(part == SPLIT_PART_FIRST ? split_get_second(root_split) : split_get_first(root_split));
+            }
+        }
+        if (focused_pane == source_pane) {
+            change_focused_pane(target_pane);
+        }
         break;
       }
     }
 }
 
-static void handle_wm_initmenu(WPARAM wParam) {
-    HMENU menu = (HMENU)wParam;
-    int resize_action = conf_get_int(wgs_active->conf, CONF_resize_action);
-    EnableMenuItem(menu, IDM_FULLSCREEN, MF_BYCOMMAND |
-                   (resize_action == RESIZE_DISABLED ? MF_GRAYED : MF_ENABLED));
+static void handle_wm_initmenu(WinGuiSession *wgs_active, HMENU menu) {
     /*
      * Destroy the Restart Session menu item. (This will return
      * failure if it's already absent, as it will be the very first
@@ -671,4 +1317,70 @@ static void handle_wm_initmenu(WPARAM wParam) {
         InsertMenu(menu, IDM_DUPSESS_NEW, MF_BYCOMMAND | MF_ENABLED,
                    IDM_DUPSESS_SFTP, "Duplicate as SFTP");
     }
+}
+
+static void message_term_hwnds(Split *split, UINT message, WPARAM wparam, LPARAM lparam) {
+    Pane *pane = split_get_pane(split);
+    if (pane) {
+      SendMessage(pane_get_term_hwnd(pane), message, wparam, lparam);
+      return;
+    }
+    message_term_hwnds(split_get_first(split), message, wparam, lparam);
+    message_term_hwnds(split_get_second(split), message, wparam, lparam);
+}
+
+static void handle_wm_mouse_move(WPARAM wparam, LPARAM lparam) {
+    /*
+     * Windows seems to like to occasionally send MOUSEMOVE
+     * events even if the mouse hasn't moved. Don't unhide
+     * the mouse pointer in this case.
+     */
+    if (last_mousemove != WM_MOUSEMOVE ||
+        wparam != last_wm_mousemove_wParam ||
+        lparam != last_wm_mousemove_lParam) {
+        show_mouseptr(pane_get_active_session(focused_pane), true);
+        last_mousemove = WM_MOUSEMOVE;
+        last_wm_mousemove_wParam = wparam;
+        last_wm_mousemove_lParam = lparam;
+    }
+    /*
+     * Add the mouse position and message time to the random
+     * number noise.
+     */
+    noise_ultralight(NOISE_SOURCE_MOUSEPOS, lparam);
+}
+
+static void handle_wm_ncmouse_move(WPARAM wparam, LPARAM lparam) {
+    if (last_mousemove != WM_NCMOUSEMOVE ||
+        wparam != last_wm_ncmousemove_wParam ||
+        lparam != last_wm_ncmousemove_lParam) {
+        show_mouseptr(pane_get_active_session(focused_pane), true);
+        last_mousemove = WM_NCMOUSEMOVE;
+        last_wm_ncmousemove_wParam = wparam;
+        last_wm_ncmousemove_lParam = lparam;
+    }
+    noise_ultralight(NOISE_SOURCE_MOUSEPOS, lparam);
+}
+
+static void terms_notify_minimised(Split *split, bool minimised) {
+    Pane *pane = split_get_pane(split);
+    if (pane) {
+        WinGuiSession *wgs = pane_get_active_session(pane);
+        term_notify_minimised(wgs->term, minimised);
+        return;
+    }
+    terms_notify_minimised(split_get_first(split), minimised);
+    terms_notify_minimised(split_get_second(split), minimised);
+}
+
+static void handle_minimised_change() {
+    WinGuiSession *wgs = pane_get_active_session(focused_pane);
+    if (is_minimized) {
+        SetWindowTextW(frame_hwnd,
+                       conf_get_bool(wgs->conf, CONF_win_name_always) ?
+                       wgs->window_name : wgs->icon_name);
+    } else {
+        SetWindowTextW(frame_hwnd, wgs->window_name);
+    }
+    terms_notify_minimised(root_split, is_minimized);
 }

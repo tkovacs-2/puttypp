@@ -1,5 +1,11 @@
 #include <windows.h>
 #include <windowsx.h>
+#include <stdbool.h>
+#include <assert.h>
+
+#include "pane.h"
+#include "split.h"
+#include "tabbar.h"
 
 #define SPLITTER_WIDTH 6
 #define SPLITTER_HEIGHT 6
@@ -23,7 +29,7 @@ static Split *dragging_splitter = NULL;
 static BOOL showing_splitter_menu = FALSE;
 static BOOL drag_full_windows = FALSE;
 static HWND splitter_move_hwnd = NULL;
-static PointerArraySetIndex pane_set_index_callback;
+static PaneSetIndexCallback pane_set_index_callback;
 static int splitter_width;
 static int splitter_height;
 static int min_pane_width;
@@ -211,7 +217,7 @@ static void move_splitter_move(Split *split) {
     SetWindowPos(splitter_move_hwnd, NULL, x, y, 0, 0, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE | SWP_NOCOPYBITS);
 }
 
-static int plan_split_ratio(Split *split) {
+static void plan_split_ratio(Split *split) {
     int rect_split;
     int left;
     int right;
@@ -259,6 +265,14 @@ static void apply_split_ratio(Split *split, float split_ratio) {
     split_apply_layout(split);
 }
 
+static void notify_frame(int code, HWND splitter_hwnd) {
+    NMHDR hdr;
+    hdr.hwndFrom = splitter_hwnd;
+    hdr.idFrom = SPLITTER_NOTIFY_ID;
+    hdr.code = code;
+    SendMessage(frame_hwnd, WM_NOTIFY, (WPARAM)splitter_hwnd, (LPARAM)&hdr);
+}
+
 static void show_splitter_menu(Split *split, HWND hwnd, int x, int y) {
     HMENU menu = CreatePopupMenu();
     AppendMenuA(menu, MF_STRING | (drag_full_windows ? MF_CHECKED : MF_UNCHECKED), IDM_SPLITTER_DRAG_PANES, "Drag panes");
@@ -290,11 +304,7 @@ static void show_splitter_menu(Split *split, HWND hwnd, int x, int y) {
         apply_split_ratio(split, 0.75f);
         break;
     case IDM_SPLITTER_MERGE:
-        NMHDR hdr;
-        hdr.hwndFrom = hwnd;
-        hdr.idFrom = SPLITTER_NOTIFY_ID;
-        hdr.code = SPLITTER_NOTIFY_MERGE;
-        SendMessage(GetParent(hwnd), WM_NOTIFY, (WPARAM)hwnd, (LPARAM)&hdr);
+        notify_frame(SPLITTER_NOTIFY_MERGE, hwnd);
         break;
     }
 }
@@ -401,12 +411,6 @@ static void plan_layout(Split *split, const RECT *rect, int rect_split) {
     }
 }
 
-static void translate_lparam_to_screen(HWND hwnd, LPARAM lparam, POINT *point) {
-    point->x = GET_X_LPARAM(lparam);
-    point->y = GET_Y_LPARAM(lparam);
-    ClientToScreen(hwnd, point);
-}
-
 static void paint_splitter(HWND hwnd, HDC hdc) {
     RECT client;
     GetClientRect(hwnd, &client);
@@ -416,13 +420,15 @@ static void paint_splitter(HWND hwnd, HDC hdc) {
 
 static void end_splitter_move() {
     if (dragging_splitter) {
+        HWND splitter_hwnd = dragging_splitter->splitter_hwnd;
         if (splitter_move_hwnd) {
-            InvalidateRect(dragging_splitter->splitter_hwnd, NULL, FALSE);
+            InvalidateRect(splitter_hwnd, NULL, FALSE);
             destroy_splitter_move();
         }
         split_hide_sizetips(dragging_splitter);
         dragging_splitter = NULL;
         ReleaseCapture();
+        notify_frame(SPLITTER_NOTIFY_EXIT_DRAG, splitter_hwnd);
     }
 }
 
@@ -460,13 +466,14 @@ static LRESULT CALLBACK splitter_proc(HWND hwnd, UINT message, WPARAM wparam, LP
         }
         SetCapture(hwnd);
         SetCursor(split->splitter_cursor);
+        notify_frame(SPLITTER_NOTIFY_ENTER_DRAG, hwnd);
         return 0;
 
-      case WM_MOUSEMOVE:
+      case WM_MOUSEMOVE: {
+        POINT point = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        MapWindowPoints(hwnd, frame_hwnd, &point, 1);
+        SendMessage(frame_hwnd, WM_MOUSEMOVE, wparam, MAKELPARAM(point.x, point.y));
         if (dragging_splitter) {
-            POINT point;
-            translate_lparam_to_screen(hwnd, lparam, &point);
-            ScreenToClient(GetParent(hwnd), &point);
             plan_layout(split, &split->rect, get_rect_split_from_point(split->type, &split->rect, &point));
             if (!splitter_move_hwnd) {
                 plan_split_ratio(split);
@@ -476,13 +483,10 @@ static LRESULT CALLBACK splitter_proc(HWND hwnd, UINT message, WPARAM wparam, LP
                 move_splitter_move(split);
             }
             split_update_sizetips(split);
-            if (!splitter_move_hwnd) {
-                split_move_sizetips(split);
-            }
             return 0;
         }
         break;
-
+      }
       case WM_LBUTTONUP:
         if (dragging_splitter && splitter_move_hwnd) {
             plan_split_ratio(split);
@@ -499,8 +503,8 @@ static LRESULT CALLBACK splitter_proc(HWND hwnd, UINT message, WPARAM wparam, LP
         if (dragging_splitter) {
             end_splitter_move();
         } else {
-            POINT point;
-            translate_lparam_to_screen(hwnd, lparam, &point);
+            POINT point = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            ClientToScreen(hwnd, &point);
             show_splitter_menu(split, hwnd, point.x, point.y);
         }
         return 0;
@@ -522,7 +526,7 @@ static LRESULT CALLBACK splitter_proc(HWND hwnd, UINT message, WPARAM wparam, LP
     return DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
-void split_common_init(PointerArraySetIndex set_index_callback) {
+void split_common_init(PaneSetIndexCallback set_index_callback) {
     WNDCLASSW splitter_class;
     ZeroMemory(&splitter_class, sizeof(splitter_class));
     splitter_class.lpfnWndProc = splitter_proc;
@@ -697,10 +701,10 @@ Split *split_get_from_point(Split *split, const POINT *point) {
         return split;
     }
     Split *result = NULL;
-    if (result = split_get_from_point(split->first, point)) {
+    if ((result = split_get_from_point(split->first, point))) {
         return result;
     }
-    if (result = split_get_from_point(split->second, point)) {
+    if ((result = split_get_from_point(split->second, point))) {
         return result;
     }
     return NULL;
@@ -724,11 +728,11 @@ SplitType split_get_possible_split(Split *split, bool slim, const POINT *point, 
         return SPLIT_TYPE_PANE;
     }
 
-    if (vertical && (abs_x > w && abs_y <= h || !horizontal && abs_x > w)) {
+    if (vertical && ((abs_x > w && abs_y <= h) || (!horizontal && abs_x > w))) {
         *part = x < 0 ? SPLIT_PART_FIRST : SPLIT_PART_SECOND;
         return SPLIT_TYPE_VERTICAL;
     }
-    if (horizontal && (abs_y > h && abs_x <= w || !vertical && abs_y > h)) {
+    if (horizontal && ((abs_y > h && abs_x <= w) || (!vertical && abs_y > h))) {
         *part = y < 0 ? SPLIT_PART_FIRST : SPLIT_PART_SECOND;
         return SPLIT_TYPE_HORIZONTAL;
     }

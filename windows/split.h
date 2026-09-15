@@ -1,3 +1,6 @@
+#ifndef SPLIT_H
+#define SPLIT_H
+
 typedef struct Pane Pane;
 typedef struct Split Split;
 
@@ -14,8 +17,10 @@ typedef enum SplitPart {
 
 #define SPLITTER_NOTIFY_ID 2
 #define SPLITTER_NOTIFY_MERGE 0
+#define SPLITTER_NOTIFY_ENTER_DRAG 1
+#define SPLITTER_NOTIFY_EXIT_DRAG 2
 
-void split_common_init();
+void split_common_init(PaneSetIndexCallback set_index_callback);
 void split_common_dpi_changed();
 
 Split *split_create(const RECT *rect);
@@ -48,3 +53,5 @@ void split_move_sizetips(Split *split);
 void split_hide_sizetips(Split *split);
 
 Pane *split_find_pane(Split *split);
+
+#endif

@@ -1,4 +1,12 @@
-typedef struct WinGuiSession WinGuiSession;
+#include <windows.h>
+#include <stdbool.h>
+#include <assert.h>
+
+#include "tabbar.h"
+#include "pointerarray.h"
+#include "panesizetip.h"
+#include "finddlg.h"
+#include "pane.h"
 
 typedef struct Pane {
     TabBar tabbar;
@@ -10,7 +18,7 @@ typedef struct Pane {
     RECT rect;
 } Pane;
 
-HWND create_term_window(const RECT *rect, void *user_data);
+HWND create_term_hwnd(const RECT *rect, void *user_data);
 void possible_term_dimensions(WinGuiSession *wgf, const RECT *term_rect, int *cols, int *rows);
 
 static void adjust_finddlg_rect(Pane *pane, RECT *rect) {
@@ -23,14 +31,14 @@ static void adjust_finddlg_rect(Pane *pane, RECT *rect) {
         rect->right -= window_rect.right - client_rect.right + 1;
     }
     RECT client_rect;
-    GetClientRect(frame_hwnd, &client_rect);
+    GetClientRect(GetParent(pane->term_hwnd), &client_rect);
     IntersectRect(rect, rect, &client_rect);
 }
 
-Pane *pane_create(const RECT *rect, PointerArraySetIndex set_index_callback) {
+Pane *pane_create(const RECT *rect, PaneSetIndexCallback set_index_callback) {
     Pane *pane = malloc(sizeof(Pane));
     tab_bar_init(&pane->tabbar, rect, pane);
-    pointer_array_init(&pane->tabbar_data, set_index_callback);
+    pointer_array_init(&pane->tabbar_data, (PointerArraySetIndex)set_index_callback);
     RECT r = *rect;
     r.top += tab_bar_common_height();
     pane->active_session = NULL;
@@ -298,4 +306,8 @@ bool pane_get_finddlg_whole_word(Pane *pane) {
 
 HWND pane_get_term_hwnd(Pane *pane) {
     return pane->term_hwnd;
+}
+
+void pane_get_active_session_hotspot(Pane *pane, POINT *hotspot) {
+    tab_bar_get_selected_tab_hotspot(&pane->tabbar, hotspot);
 }

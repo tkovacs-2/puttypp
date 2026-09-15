@@ -1,5 +1,9 @@
 #include <windows.h>
 
+#ifndef WM_DPICHANGED
+#define WM_DPICHANGED 0x02E0
+#endif
+
 static const WCHAR SPLIT_MARKER_CLASS_NAME[] = L"SplitMarker";
 static HWND split_marker_hwnd = NULL;
 
