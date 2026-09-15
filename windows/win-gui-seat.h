@@ -64,6 +64,8 @@ enum UnderlineMode {
     UND_LINE, UND_FONT
 };
 
+typedef struct Pane Pane;
+
 struct WinGuiSession {
     Seat seat;
     TermWin termwin;
@@ -76,7 +78,6 @@ struct WinGuiSession {
     int offset_width, offset_height;
 
     HBITMAP caretbm;
-    int caret_x, caret_y;
 
     Ldisc *ldisc;
     Backend *backend;
@@ -144,9 +145,16 @@ struct WinGuiSession {
     bool cursor_visible;
     bool cursor_forced_visible;
     struct {
-      bool was_zoomed;
-      int font_width;
-      int font_height;
+      bool alt_pressed;
+      bool activate;
+
+      bool maximized;
+      bool font_resized;
+      int font_dpi;
+      int normal_font_width;
+      int normal_font_height;
+      int init_font_width;
+      int init_font_height;
     } resize_either;
     int font_dpi;
     struct {
@@ -158,4 +166,7 @@ struct WinGuiSession {
       bool data_arrived;
       bool update_finddlg_pending;
     } find;
+    int backend_rows;
+    int backend_cols;
+    Pane *pane;
 };

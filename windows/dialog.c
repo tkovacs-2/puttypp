@@ -976,7 +976,7 @@ bool do_reconfig_pp(HWND parent, Conf *conf, const char **session_name, int prot
 
     pds->dp->shortcuts['g'] = true;          /* the treeview: `Cate&gory' */
 
-    set_session_name(*session_name, pds->ctrlbox);
+    set_session_name(dupstr(*session_name), pds->ctrlbox);
     ret = ShinyDialogBox(hinst, MAKEINTRESOURCE(IDD_MAINBOX), "PuTTYConfigBox",
                          parent, GenericMainDlgProc, pds);
     if (ret) {
