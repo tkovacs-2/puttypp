@@ -333,7 +333,6 @@ SOURCES := ../$(PUTTY)/windows/utils/agent_mutex_name.c \
             ../$(PUTTY)/windows/config.c \
             ../$(PUTTY)/windows/printing.c \
             ../$(PUTTY)/windows/jump-list.c \
-            ../$(PUTTY)/windows/sizetip.c \
             ../$(PUTTY)/windows/help.c \
             ../$(PUTTY)/ssh/bpp1.c \
             ../$(PUTTY)/ssh/bpp2.c \
