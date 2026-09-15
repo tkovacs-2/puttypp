@@ -16,6 +16,10 @@ int term_sblines(Terminal *term) {
     return sblines(term);
 }
 
+void term_update_sbar(Terminal *term) {
+    update_sbar(term);
+}
+
 static void set_erase_char(Terminal *term)
 {
     set_erase_char_original(term);

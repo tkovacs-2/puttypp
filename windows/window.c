@@ -15,7 +15,7 @@
 
 #include "putty.h"
 #include "ssh.h"
-#include "terminal.h"
+#include "terminal_public.h"
 #include "storage.h"
 #include "putty-rc.h"
 #include "security-api.h"
@@ -30,6 +30,7 @@
 #include <commctrl.h>
 #include <richedit.h>
 #include <mmsystem.h>
+#include <windowsx.h>
 
 /* From MSDN: In the WM_SYSCOMMAND message, the four low-order bits of
  * wParam are used by Windows, and should be masked off, so we shouldn't
@@ -57,6 +58,7 @@
 #define IDM_FIND      0x01C0
 #define IDM_SPECIALSEP 0x0200
 #define IDM_DUPSESS_SFTP 0x0210
+#define IDM_ALWAYSONTOP 0x0220
 
 #define IDM_SPECIAL_MIN 0x0400
 #define IDM_SPECIAL_MAX 0x0800
@@ -115,16 +117,10 @@ static void set_input_locale(HKL);
 static void update_savedsess_menu();
 static void init_winfuncs();
 
-static bool is_full_screen();
-static void make_full_screen();
-static void clear_full_screen();
 static void flip_full_screen();
 static void process_clipdata(HWND hwnd, HGLOBAL clipdata, bool unicode);
 static void paste_clipdata(Terminal *term, WPARAM wParam, LPARAM lParam);
 static void setup_clipboards(Terminal *, Conf *);
-
-/* Window layout information */
-static void reset_window(WinGuiSession *wgs, int reinit);
 
 static void flash_window(int mode);
 static void sys_cursor_update(WinGuiSession *);
@@ -144,23 +140,18 @@ DECL_WINDOWS_FUNCTION(static, HRESULT, GetSystemMetricsForDpi, (int nIndex, UINT
 DECL_WINDOWS_FUNCTION(static, HRESULT, AdjustWindowRectExForDpi, (LPRECT lpRect, DWORD dwStyle, BOOL bMenu, DWORD dwExStyle, UINT dpi));
 DECL_WINDOWS_FUNCTION(static, BOOL, SystemParametersInfoForDpi, (UINT uiAction, UINT uiParam, PVOID pvParam, UINT fWinIni, UINT dpi));
 
-static int extra_width, extra_height;
-static bool was_zoomed = false;
 static int kbd_codepage;
 
 static struct PopupMenu popup_menus[2];
 static HMENU savedsess_menu;
 
 POINT dpi_info;
-static RECT dpi_changed_new_wnd_rect;
 
 static WinGuiSession *lastbtn_wgs = NULL;
 static int dbltime, lasttime, lastact;
 static Mouse_Button lastbtn;
 
-static bool resizing;
-static bool fullscr_on_max = false;
-static bool processed_resize = false;
+static bool resizing = false;
 static bool in_scrollbar_loop = false;
 static UINT last_mousemove = 0;
 static WPARAM last_wm_mousemove_wParam;
@@ -180,14 +171,14 @@ static UINT wm_mousewheel = WM_MOUSEWHEEL;
      ((wch) >= 0xFE00 && (wch) <= 0xFE0F)) /* VARIATION SELECTOR 1-16 */
 
 HWND frame_hwnd = NULL;
-static HWND term_hwnd = NULL;
 static bool confirm_paste = true;
-
-static WinGuiSession *wgs_active = NULL;
 
 #include "frame.h"
 #include "tabbar.h"
-#include "pointerarray.h"
+#include "pane.h"
+#include "panesizetip.h"
+#include "split.h"
+#include "splitmarker.h"
 #include "pastedlg.h"
 #include "finddlg.h"
 #include "find/find.h"
@@ -195,10 +186,16 @@ static WinGuiSession *wgs_active = NULL;
 #include "draw_text_find_match.h"
 
 static FindMatchMask find_match_mask;
-static FindDlg finddlg;
-static TabBar tabbar;
-static PointerArray pointer_array;
+
+static Split *root_split = NULL;
+static Pane *focused_pane = NULL;
 static HFONT tab_bar_font = NULL;
+static bool is_zoomed = false;
+static bool is_minimized = false;
+static bool is_fullscr = false;
+static WINDOWPLACEMENT fullscr_placement = {sizeof(WINDOWPLACEMENT)};
+static bool skip_update_split_layout = false;
+static RECT split_layout_rect = {0, 0, 0, 0};
 
 static bool wintw_setup_draw_ctx(TermWin *);
 static void wintw_draw_text(TermWin *, int x, int y, wchar_t *text, int len,
@@ -488,9 +485,13 @@ static void stop_backend(WinGuiSession *wgs)
     }
 }
 
-static void frontend_set_tab_index(void *p, int index) {
-    WinGuiSession *wgs = (WinGuiSession *)p;
+static void session_set_index(WinGuiSession *wgs, int index) {
     wgs->tab_index = index;
+}
+
+static void session_set_pane(WinGuiSession *wgs, Pane *pane) {
+    wgs->pane = pane;
+    wgs->term_hwnd = pane_get_term_hwnd(pane);
 }
 
 static bool is_session_deletable(WinGuiSession *wgs) {
@@ -506,7 +507,7 @@ static void remote_close_callback(void *context) {
 
     stop_backend(wgs);
     if (is_session_deletable(wgs)) {
-        delete_session(wgs);
+        delete_session(wgs->pane, wgs->tab_index);
     }
 }
 
@@ -518,7 +519,7 @@ static void remote_close(WinGuiSession *wgs, int exitcode, const char *msg) {
     if (is_session_deletable(wgs)) {
         return;
     }
-    tab_bar_set_tab_unusable(&tabbar, wgs->tab_index, true);
+    pane_set_session_unusable(wgs->pane, wgs->tab_index, true);
     add_error_message_to_term(wgs, msg);
 }
 
@@ -552,36 +553,14 @@ static void check_menu_item(UINT item, UINT check)
         CheckMenuItem(popup_menus[i].menu, item, check);
 }
 
-static void finddlg_pin_to_frame() {
-    HDWP hdwp = BeginDeferWindowPos(1);
-    finddlg_pin_window(&finddlg, hdwp);
-    EndDeferWindowPos(hdwp);
-}
-
-static void finddlg_adjust_to_frame() {
-    RECT r;
-    GetClientRect(term_hwnd, &r);
-    MapWindowPoints(term_hwnd, frame_hwnd, (POINT *)&r, 2);
-    finddlg_adjust_window(&finddlg, &r);
-}
-
-static void tab_bar_adjust_window_old() {
-    HDWP hdwp = BeginDeferWindowPos(1);
-    RECT r;
-    GetClientRect(frame_hwnd, &r);
-    tab_bar_adjust_window(&tabbar, &r, hdwp);
-    EndDeferWindowPos(hdwp);
-}
-
-HWND create_term_hwnd() {
-    return NULL;
-}
-
-void possible_term_dimensions(WinGuiSession *wgs, int *width, int *height) {
-}
-
 HINSTANCE hinst;
-static const char *term_class_name = "TermWindow";
+static const WCHAR term_class_name[] = L"TermWindow";
+
+HWND create_term_hwnd(const RECT *rect, void *user_data) {
+    return CreateWindowExW(0, term_class_name, NULL, WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_CLIPSIBLINGS,
+                           rect->left, rect->top, rect->right - rect->left, rect->bottom - rect->top,
+                           frame_hwnd, NULL, hinst, user_data);
+}
 
 extern const char *cmdline_session_name;
 extern const BackendVtable conpty_backend;
@@ -593,7 +572,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
 {
     MSG msg;
     HRESULT hr;
-    int guess_width, guess_height;
 
     dll_hijacking_protection();
     enable_dit();
@@ -665,141 +643,49 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
         wndclass.cbClsExtra = 0;
         wndclass.cbWndExtra = 0;
         wndclass.hInstance = inst;
-        wndclass.hIcon = LoadIcon(inst, MAKEINTRESOURCE(IDI_MAINICON));
+        wndclass.hIcon = NULL;
         wndclass.hCursor = LoadCursor(NULL, IDC_IBEAM);
         wndclass.hbrBackground = NULL;
         wndclass.lpszMenuName = NULL;
-        wndclass.lpszClassName = dup_mb_to_wc(DEFAULT_CODEPAGE, term_class_name);
+        wndclass.lpszClassName = term_class_name;
 
         RegisterClassW(&wndclass);
     }
 
-    /*
-     * Guess some defaults for the window size. This all gets
-     * updated later, so we don't really care too much. However, we
-     * do want the font width/height guesses to correspond to a
-     * large font rather than a small one...
-     */
-
-    const int font_width = 10;
-    const int font_height = 20;
-    extra_width = 25;
-    extra_height = 28;
-    guess_width = extra_width + font_width * conf_get_int(
-        conf, CONF_width);
-    guess_height = extra_height + font_height * conf_get_int(
-        conf, CONF_height);
+    WinGuiSession *wgs;
     {
-        RECT r;
-        get_fullscreen_rect(&r);
-        if (guess_width > r.right - r.left)
-            guess_width = r.right - r.left;
-        if (guess_height > r.bottom - r.top)
-            guess_height = r.bottom - r.top;
-    }
+        create_frame_window();
 
-    {
-        frame_hwnd = create_frame_window(conf, guess_width, guess_height);
-
-        int winmode = WS_CHILD | WS_VISIBLE;
-        int exwinmode = 0;
-
-        wchar_t *uappname = dup_mb_to_wc(DEFAULT_CODEPAGE, term_class_name);
-        term_hwnd = CreateWindowExW(
-            exwinmode, uappname, NULL,
-            winmode, CW_USEDEFAULT, CW_USEDEFAULT,
-            guess_width, guess_height, frame_hwnd, NULL, inst, NULL);
-
-        if (!term_hwnd) {
-            modalfatalbox("Unable to create terminal window: %s",
-                          win_strerror(GetLastError()));
-        }
         memset(&dpi_info, 0, sizeof(dpi_info));
         init_dpi_info();
-        sfree(uappname);
-
         tab_bar_font = get_dpi_aware_tab_bar_font();
         tab_bar_common_init(tab_bar_font);
-        RECT r;
-        GetClientRect(frame_hwnd, &r);
-        tab_bar_init(&tabbar, &r, NULL);
-        tab_bar_set_focused(&tabbar, true);
-        add_session_tab(conf_get_int(conf, CONF_protocol), cmdline_session_name, 0);
-        pointer_array_init(&pointer_array, frontend_set_tab_index);
-        finddlg_init(&finddlg, NULL);
-    }
+        size_tip_common_init(tab_bar_font);
+        split_common_init(session_set_index);
+        split_marker_init();
 
-    wgs_active = create_frontend(conf, cmdline_session_name);
-    WinGuiSession *wgs = wgs_active;
-    pointer_array_insert(&pointer_array, 0, wgs);
+        RECT rect;
+        GetClientRect(frame_hwnd, &rect);
+        root_split = split_create(&rect);
+        Pane *pane = split_get_pane(root_split);
+        focused_pane = pane;
+
+        wgs = add_stale_session(pane, conf, cmdline_session_name, 0);
+        set_term_hwnd_style(pane, pane_get_session(pane, 0));
+        pane_select_session(pane, 0);
+    }
 
     /*
      * Correct the guesses for extra_{width,height}.
      */
     {
-        RECT cr, wr;
-        GetWindowRect(frame_hwnd, &wr);
-        GetClientRect(frame_hwnd, &cr);
-        wgs->offset_width = wgs->offset_height =
-            conf_get_int(conf, CONF_window_border);
-        extra_width =
-            wr.right - wr.left - cr.right + cr.left + wgs->offset_width*2;
-        extra_height =
-            wr.bottom - wr.top - cr.bottom + cr.top +wgs->offset_height*2;
-        adjust_extra_size();
-    }
-
-    /*
-     * Compute what size we _really_ want the window to be.
-     */
-    guess_width = extra_width + wgs->font_width * wgs->term->cols;
-    guess_height = extra_height + wgs->font_height * wgs->term->rows;
-
-    /*
-     * Resize the window to that size, also repositioning it if it's extended
-     * off the edge of a monitor.
-     */
-    {
-        /* Find the previous coordinates of the window */
-        RECT winr;
-        GetWindowRect(wgs->term_hwnd, &winr);
-
-        int x = winr.left;
-        int y = winr.top;
-
-        /* Adjust them if necessary */
-        RECT war;
-        if (get_workingarea_rect(&war)) {
-            /*
-             * Try to ensure the window is entirely within the monitor's
-             * working area, by adjusting its position if not.
-             *
-             * We first move it left, if it overlaps off the right side. Then
-             * we move it right if it overlaps off the left side. This means
-             * that if it's wider than the working area (so that some overlap
-             * is unavoidable), we prefer to get its left edge in bounds than
-             * its right edge. Similarly, we do the y checks in the same
-             * order, privileging the top edge over the bottom.
-             */
-            if (x + guess_width > war.right)
-                x = war.right - guess_width;
-            if (x < war.left)
-                x = war.left;
-            if (y + guess_height > war.bottom)
-                y = war.bottom - guess_height;
-            if (y < war.top)
-                y = war.top;
-        }
-
-        /* And set the window to the final size and position we've chosen */
-        SetWindowPos(frame_hwnd, NULL, x, y, guess_width, guess_height,
-                    SWP_NOREDRAW | SWP_NOZORDER);
+        snap_frame_to_term(focused_pane);
     }
 
     /*
      * Initialise the scroll bar.
      */
-    set_scrollbar(wgs->term->rows, 0, wgs->term->rows, false);
+     pane_set_scrollbar(focused_pane, wgs->term->rows, 0, wgs->term->rows, false);
 
     /*
      * Prepare the mouse handler.
@@ -845,6 +731,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
             AppendMenu(m, MF_SEPARATOR, 0, 0);
             AppendMenu(m, MF_ENABLED, IDM_SHOWLOG, "&Event Log");
             AppendMenu(m, MF_ENABLED, IDM_FULLSCREEN, "&Full Screen");
+            AppendMenu(m, MF_ENABLED, IDM_ALWAYSONTOP, "Always on Top");
             AppendMenu(m, MF_ENABLED | (confirm_paste ? MF_CHECKED : MF_UNCHECKED), IDM_CONFIRM_PASTE, "Confirm Paste");
             AppendMenu(m, MF_ENABLED, IDM_FIND, "&Find...");
             AppendMenu(m, MF_SEPARATOR, 0, 0);
@@ -876,7 +763,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
     ShowWindow(frame_hwnd, show);
     SetForegroundWindow(frame_hwnd);
 
-    term_set_focus(wgs->term, GetForegroundWindow() == frame_hwnd);
     UpdateWindow(wgs->term_hwnd);
 
     gui_terminal_ready(wgs->term_hwnd, &wgs->seat, wgs->backend);
@@ -907,8 +793,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show)
             timeout = 0;
         } else {
             timeout = INFINITE;
-            /* The messages seem unreliable; especially if we're being tricky */
-            term_set_focus(wgs_active->term, GetForegroundWindow() == frame_hwnd);
         }
 
         HandleWaitList *hwl = get_handle_wait_list();
@@ -1200,7 +1084,7 @@ static void win_seat_set_busy_status(Seat *seat, BusyStatus status)
 {
     WinGuiSession *wgs = container_of(seat, WinGuiSession, seat);
     wgs->busy_status = status;
-    if (wgs != wgs_active) {return;}
+    if (wgs != pane_get_active_session(wgs->pane)) {return;}
     update_mouse_pointer(wgs);
 }
 
@@ -1214,7 +1098,7 @@ static void wintw_set_raw_mouse_mode_pointer(TermWin *tw, bool activate)
 {
     WinGuiSession *wgs = container_of(tw, WinGuiSession, termwin);
     wgs->pointer_indicates_raw_mouse = activate;
-    if (wgs != wgs_active) {return;}
+    if (wgs != pane_get_active_session(wgs->pane)) {return;}
     update_mouse_pointer(wgs);
 }
 
@@ -1225,7 +1109,7 @@ static void win_seat_connection_fatal(Seat *seat, const char *msg)
 {
     WinGuiSession *wgs = container_of(seat, WinGuiSession, seat);
 
-    if (wgs == wgs_active) {
+    if (wgs == pane_get_active_session(wgs->pane)) {
         int close_on_exit = conf_get_int(wgs->conf, CONF_close_on_exit);
         char *title = dupprintf("%s Fatal Error", appname);
         show_mouseptr(wgs, true);
@@ -1758,337 +1642,6 @@ static void deinit_fonts(WinGuiSession *wgs)
 
 static void wintw_request_resize(TermWin *tw, int w, int h)
 {
-    WinGuiSession *wgs = container_of(tw, WinGuiSession, termwin);
-    const struct BackendVtable *vt;
-    int width, height;
-    int resize_action = conf_get_int(wgs->conf, CONF_resize_action);
-    bool deny_resize = false;
-
-    /* Suppress server-originated resizing attempts if local resizing
-     * is disabled entirely, or if it's supposed to change
-     * rows/columns but the window is maximised. */
-    if (resize_action == RESIZE_DISABLED
-        || (resize_action == RESIZE_TERM && IsZoomed(frame_hwnd))) {
-        deny_resize = true;
-    }
-
-    vt = backend_vt_from_proto(be_default_protocol);
-    if (vt && vt->flags & BACKEND_RESIZE_FORBIDDEN)
-        deny_resize = true;
-    if (h == wgs->term->rows && w == wgs->term->cols) deny_resize = true;
-
-    /* We still need to acknowledge a suppressed resize attempt. */
-    if (deny_resize) {
-        term_resize_request_completed(wgs->term);
-        return;
-    }
-
-    /* Sanity checks ... */
-    {
-        RECT ss;
-        if (get_fullscreen_rect(&ss)) {
-            /* Make sure the values aren't too big */
-            width = (ss.right - ss.left - extra_width) / 4;
-            height = (ss.bottom - ss.top - extra_height) / 6;
-
-            if (w > width || h > height) {
-                term_resize_request_completed(wgs->term);
-                return;
-            }
-            if (w < 15)
-                w = 15;
-            if (h < 1)
-                h = 1;
-        }
-    }
-
-     if (resize_action != RESIZE_FONT && !IsZoomed(frame_hwnd)) {
-        if (wgs != wgs_active) {
-            term_resize_request_completed(wgs->term);
-            return;
-        }
-        width = extra_width + wgs->font_width * w;
-        height = extra_height + wgs->font_height * h;
-
-        SetWindowPos(frame_hwnd, NULL, 0, 0, width, height,
-            SWP_NOACTIVATE | SWP_NOCOPYBITS |
-            SWP_NOMOVE | SWP_NOZORDER);
-    } else {
-        /*
-         * If we're resizing by changing the font, we must tell the
-         * terminal the new size immediately, so that reset_window
-         * will know what to do.
-         */
-        term_size(wgs->term, h, w, conf_get_int(wgs->conf, CONF_savelines));
-        if (wgs != wgs_active) {
-            term_resize_request_completed(wgs->term);
-            return;
-        }
-        reset_window(wgs, 0);
-    }
-
-    term_resize_request_completed(wgs->term);
-    refresh_find_match_mask(wgs);
-    InvalidateRect(wgs->term_hwnd, NULL, true);
-}
-
-static void recompute_window_offset(WinGuiSession *wgs)
-{
-    RECT cr;
-    GetClientRect(frame_hwnd, &cr);
-
-    int win_width  = cr.right - cr.left;
-    int win_height = cr.bottom - cr.top;
-    adjust_client_size(&win_width, &win_height);
-
-    int new_offset_width = (win_width-wgs->font_width*wgs->term->cols)/2;
-    int new_offset_height = (win_height-wgs->font_height*wgs->term->rows)/2;
-
-    if (wgs->offset_width != new_offset_width ||
-        wgs->offset_height != new_offset_height) {
-        wgs->offset_width = new_offset_width;
-        wgs->offset_height = new_offset_height;
-        InvalidateRect(wgs->term_hwnd, NULL, true);
-    }
-}
-
-static void reset_window(WinGuiSession *wgs, int reinit)
-{
-    /*
-     * This function decides how to resize or redraw when the
-     * user changes something.
-     *
-     * This function doesn't like to change the terminal size but if the
-     * font size is locked that may be it's only soluion.
-     */
-    int win_width, win_height, resize_action, window_border;
-    RECT cr, wr;
-
-    /* Current window sizes ... */
-    GetWindowRect(frame_hwnd, &wr);
-    GetClientRect(frame_hwnd, &cr);
-
-    win_width  = cr.right - cr.left;
-    win_height = cr.bottom - cr.top;
-    adjust_client_size(&win_width, &win_height);
-
-    resize_action = conf_get_int(wgs->conf, CONF_resize_action);
-    window_border = conf_get_int(wgs->conf, CONF_window_border);
-
-    if (resize_action == RESIZE_DISABLED)
-        reinit = 2;
-
-    /* Are we being forced to reload the fonts ? */
-    if (reinit>1) {
-        deinit_fonts(wgs);
-        init_fonts(wgs, 0,0);
-    }
-
-    /* Oh, looks like we're minimised */
-    if (win_width == 0 || win_height == 0)
-        return;
-
-    /* Is the window out of position ? */
-    if (!reinit) {
-        recompute_window_offset(wgs);
-    }
-
-    if (IsZoomed(frame_hwnd)) {
-        /* We're fullscreen, this means we must not change the size of
-         * the window so it's the font size or the terminal itself.
-         */
-
-        extra_width = wr.right - wr.left - cr.right + cr.left;
-        extra_height = wr.bottom - wr.top - cr.bottom + cr.top;
-        adjust_extra_size();
-
-        if (resize_action != RESIZE_TERM) {
-            if (wgs->font_width != win_width/wgs->term->cols ||
-                wgs->font_height != win_height/wgs->term->rows) {
-                int fw = (win_width - 2*window_border) / wgs->term->cols;
-                int fh = (win_height - 2*window_border) / wgs->term->rows;
-                /* In case that subtraction made the font size go
-                 * negative in an edge case, bound it below by 1 */
-                if (fw < 1) fw = 1;
-                if (fh < 1) fh = 1;
-                deinit_fonts(wgs);
-                init_fonts(wgs, fw, fh);
-                wgs->offset_width =
-                    (win_width - wgs->font_width*wgs->term->cols) / 2;
-                wgs->offset_height =
-                    (win_height - wgs->font_height*wgs->term->rows) / 2;
-                InvalidateRect(wgs->term_hwnd, NULL, true);
-            }
-        } else {
-            if (wgs->font_width * wgs->term->cols != win_width ||
-                wgs->font_height * wgs->term->rows != win_height) {
-                /* Our only choice at this point is to change the
-                 * size of the terminal; Oh well.
-                 */
-                term_size(wgs->term,
-                          (win_height - 2*window_border) / wgs->font_height,
-                          (win_width - 2*window_border) / wgs->font_width,
-                          conf_get_int(wgs->conf, CONF_savelines));
-                wgs->offset_width =
-                    (win_width - window_border - wgs->font_width*wgs->term->cols) / 2;
-                wgs->offset_height =
-                    (win_height - window_border - wgs->font_height*wgs->term->rows) / 2;
-                InvalidateRect(wgs->term_hwnd, NULL, true);
-                refresh_find_match_mask(wgs);
-            }
-        }
-        return;
-    }
-
-    /* Resize window after DPI change */
-    if (reinit == 3 && p_GetSystemMetricsForDpi && p_AdjustWindowRectExForDpi) {
-        RECT rect;
-        rect.left = rect.top = 0;
-        rect.right = (wgs->font_width * wgs->term->cols);
-        if (conf_get_bool(wgs->conf, CONF_scrollbar))
-            rect.right += p_GetSystemMetricsForDpi(SM_CXVSCROLL,
-                                                   dpi_info.x);
-        rect.bottom = (wgs->font_height * wgs->term->rows);
-        rect.right += 0;
-        rect.bottom += tab_bar_common_height();
-        p_AdjustWindowRectExForDpi(
-            &rect, GetWindowLongPtr(frame_hwnd, GWL_STYLE),
-            FALSE, GetWindowLongPtr(frame_hwnd, GWL_EXSTYLE),
-            dpi_info.x);
-        rect.right += (window_border * 2);
-        rect.bottom += (window_border * 2);
-        OffsetRect(&dpi_changed_new_wnd_rect,
-            ((dpi_changed_new_wnd_rect.right -
-              dpi_changed_new_wnd_rect.left) -
-             (rect.right - rect.left)) / 2,
-            ((dpi_changed_new_wnd_rect.bottom -
-              dpi_changed_new_wnd_rect.top) -
-             (rect.bottom - rect.top)) / 2);
-        SetWindowPos(frame_hwnd, NULL,
-                     dpi_changed_new_wnd_rect.left,
-                     dpi_changed_new_wnd_rect.top,
-                     rect.right - rect.left, rect.bottom - rect.top,
-                     SWP_NOZORDER);
-
-        InvalidateRect(wgs->term_hwnd, NULL, true);
-        return;
-    }
-
-    /* Hmm, a force re-init means we should ignore the current window
-     * so we resize to the default font size.
-     */
-    if (reinit>0) {
-        wgs->offset_width = wgs->offset_height = window_border;
-        extra_width =
-            wr.right - wr.left - cr.right + cr.left + wgs->offset_width*2;
-        extra_height =
-            wr.bottom - wr.top - cr.bottom + cr.top +wgs->offset_height*2;
-        adjust_extra_size();
-
-        if (win_width != (wgs->font_width*wgs->term->cols +
-                          wgs->offset_width*2) ||
-            win_height != (wgs->font_height*wgs->term->rows +
-                           wgs->offset_height*2)) {
-
-            /* If this is too large windows will resize it to the maximum
-             * allowed window size, we will then be back in here and resize
-             * the font or terminal to fit.
-             */
-            SetWindowPos(frame_hwnd, NULL, 0, 0,
-                         wgs->font_width*wgs->term->cols + extra_width,
-                         wgs->font_height*wgs->term->rows + extra_height,
-                         SWP_NOMOVE | SWP_NOZORDER);
-        }
-
-        InvalidateRect(wgs->term_hwnd, NULL, true);
-        return;
-    }
-
-    /* Okay the user doesn't want us to change the font so we try the
-     * window. But that may be too big for the screen which forces us
-     * to change the terminal.
-     */
-    if ((resize_action == RESIZE_TERM && reinit<=0) ||
-        (resize_action == RESIZE_EITHER && reinit<0) ||
-            reinit>0) {
-        wgs->offset_width = wgs->offset_height = window_border;
-        extra_width =
-            wr.right - wr.left - cr.right + cr.left + wgs->offset_width*2;
-        extra_height =
-            wr.bottom - wr.top - cr.bottom + cr.top +wgs->offset_height*2;
-        adjust_extra_size();
-
-        if (win_width != (wgs->font_width*wgs->term->cols +
-                          wgs->offset_width*2) ||
-            win_height != (wgs->font_height*wgs->term->rows +
-                           wgs->offset_height*2)) {
-
-            RECT ss;
-            int width, height;
-
-                get_fullscreen_rect(&ss);
-
-            width = (ss.right - ss.left - extra_width) / wgs->font_width;
-            height = (ss.bottom - ss.top - extra_height) / wgs->font_height;
-
-            /* Grrr too big */
-            if ( wgs->term->rows > height || wgs->term->cols > width ) {
-                if (resize_action == RESIZE_EITHER) {
-                    /* Make the font the biggest we can */
-                    if (wgs->term->cols > width)
-                        wgs->font_width =
-                            (ss.right - ss.left - extra_width) /
-                            wgs->term->cols;
-                    if (wgs->term->rows > height)
-                        wgs->font_height =
-                            (ss.bottom - ss.top - extra_height) /
-                            wgs->term->rows;
-
-                    deinit_fonts(wgs);
-                    init_fonts(wgs, wgs->font_width, wgs->font_height);
-
-                    width = (ss.right - ss.left - extra_width) /
-                        wgs->font_width;
-                    height = (ss.bottom - ss.top - extra_height) /
-                        wgs->font_height;
-                } else {
-                    if ( height > wgs->term->rows ) height = wgs->term->rows;
-                    if ( width > wgs->term->cols )  width = wgs->term->cols;
-                    term_size(wgs->term, height, width,
-                              conf_get_int(wgs->conf, CONF_savelines));
-                    refresh_find_match_mask(wgs);
-                }
-            }
-
-            SetWindowPos(frame_hwnd, NULL, 0, 0,
-                         wgs->font_width*wgs->term->cols + extra_width,
-                         wgs->font_height*wgs->term->rows + extra_height,
-                         SWP_NOMOVE | SWP_NOZORDER);
-
-            InvalidateRect(wgs->term_hwnd, NULL, true);
-        }
-        return;
-    }
-
-    /* We're allowed to or must change the font but do we want to ?  */
-
-    if (wgs->font_width != (win_width-window_border*2)/wgs->term->cols ||
-        wgs->font_height != (win_height-window_border*2)/wgs->term->rows) {
-
-        deinit_fonts(wgs);
-        init_fonts(wgs, (win_width-window_border*2)/wgs->term->cols,
-                   (win_height-window_border*2)/wgs->term->rows);
-        wgs->offset_width = (win_width-wgs->font_width*wgs->term->cols)/2;
-        wgs->offset_height = (win_height-wgs->font_height*wgs->term->rows)/2;
-
-        extra_width =
-            wr.right - wr.left - cr.right + cr.left +wgs->offset_width*2;
-        extra_height =
-            wr.bottom - wr.top - cr.bottom + cr.top+wgs->offset_height*2;
-        adjust_extra_size();
-
-        InvalidateRect(wgs->term_hwnd, NULL, true);
-    }
 }
 
 static void set_input_locale(HKL kl)
@@ -2193,7 +1746,7 @@ static void exit_callback(void *vctx)
             /* exitcode == INT_MAX indicates that the connection was closed
              * by a fatal error, so an error box will be coming our way and
              * we should not generate this informational one. */
-            if (exitcode != INT_MAX && wgs == wgs_active) {
+            if (exitcode != INT_MAX && wgs == pane_get_active_session(wgs->pane)) {
                 show_mouseptr(wgs, true);
                 if (MessageBox(frame_hwnd, "Connection closed by remote host\nDo you want to close the session tab?",
                        appname, MB_YESNO | MB_ICONINFORMATION) == IDYES) {
@@ -2241,103 +1794,20 @@ static void free_hdc(WinGuiSession *wgs, HDC hdc)
     ReleaseDC(wgs->term_hwnd, hdc);
 }
 
-static void wm_size_resize_term(WinGuiSession *wgs, LPARAM lParam)
-{
-    int width = LOWORD(lParam);
-    int height = HIWORD(lParam);
-    int border_size = conf_get_int(wgs->conf, CONF_window_border);
-    adjust_client_size(&width, &height);
-
-    int w = (width - border_size*2) / wgs->font_width;
-    int h = (height - border_size*2) / wgs->font_height;
-
-    if (w < 1) w = 1;
-    if (h < 1) h = 1;
-
-    if (resizing) {
-        /*
-         * If we're in the middle of an interactive resize, we don't
-         * call term_size. This means that, firstly, the user can drag
-         * the size back and forth indecisively without wiping out any
-         * actual terminal contents, and secondly, the Terminal
-         * doesn't call back->size in turn for each increment of the
-         * resizing drag, so we don't spam the server with huge
-         * numbers of resize events.
-         */
-        wgs->need_backend_resize = true;
-    } else {
-        if (wgs->term->cols != w || wgs->term->rows != h) {
-            term_size(wgs->term, h, w, conf_get_int(wgs->conf, CONF_savelines));
-            refresh_find_match_mask(wgs);
-        }
-    }
-    conf_set_int(wgs->conf, CONF_height, h);
-    conf_set_int(wgs->conf, CONF_width, w);
-}
-
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                                 WPARAM wParam, LPARAM lParam)
 {
-    bool is_term_hwnd = (frame_hwnd != NULL && hwnd != frame_hwnd);
     HDC hdc;
-    int resize_action;
-    WinGuiSession *wgs = wgs_active;
+    Pane *pane = pane_get_from_term_hwnd(hwnd);
+    WinGuiSession *wgs = (pane ? pane_get_active_session(pane) : NULL);
 
     switch (message) {
-      case WM_DRAWITEM:
-        if (is_term_hwnd) {
-          break;
-        }
-        return SendMessage(((DRAWITEMSTRUCT *)lParam)->hwndItem, WM_DRAWITEM, wParam, lParam);
-      case WM_NOTIFY:
-        if (is_term_hwnd) {
-          break;
-        }
-        handle_wm_notify(lParam);
-        break;
+      case WM_CREATE:
+        SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)((CREATESTRUCTW *)lParam)->lpCreateParams);
+        return 0;
       case WM_INITMENU:
-        handle_wm_initmenu(wParam);
+        handle_wm_initmenu(wgs, (HMENU)wParam);
         break;
-      case WM_CLOSE: {
-        if (is_term_hwnd) {
-            return 0;
-        }
-        show_mouseptr(wgs, true);
-        char *title = dupprintf("%s Exit Confirmation", appname);
-        int ret = MessageBox(hwnd, "Are you sure you want to close All sessions?", title,
-                       MB_ICONWARNING | MB_OKCANCEL | MB_DEFBUTTON1);
-        sfree(title);
-        if (ret != IDOK) {
-            return 0;
-        }
-        SetFocus(NULL);
-        for (int i=0; i<pointer_array_size(&pointer_array); i++) {
-            WinGuiSession *wgs = (WinGuiSession *)pointer_array_get(&pointer_array, i);
-            if (wgs->backend) {
-                stop_backend(wgs);
-            }
-            if (wgs->remote_closed) {
-                delete_callbacks_for_context(wgs);
-            }
-            destroy_frontend(wgs);
-        }
-        wgs_active = NULL;
-        DestroyWindow(hwnd);
-        return 0;
-      }
-      case WM_DESTROY:
-        if (is_term_hwnd) {
-            return 0;
-        }
-        DestroyWindow(term_hwnd);
-        tab_bar_uninit(&tabbar);
-        tab_bar_common_uninit();
-        DeleteObject(tab_bar_font);
-        finddlg_uninit(&finddlg);
-        pointer_array_uninit(&pointer_array);
-        find_match_mask_free(&find_match_mask);
-        PostQuitMessage(0);
-        return 0;
       case WM_INITMENUPOPUP:
         if ((HMENU)wParam == savedsess_menu) {
             /* About to pop up Saved Sessions sub-menu.
@@ -2350,35 +1820,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         break;
       case WM_COMMAND:
       case WM_SYSCOMMAND:
-        if (is_term_hwnd) {
-            bool process_by_term_window = false;
-            switch (wParam & ~0xF) {
-              case IDM_COPY:
-              case IDM_PASTE:
-                process_by_term_window = true;
-                break;
-              default:
-                SendMessage(frame_hwnd, message, wParam, lParam);
-                break;
-            }
-            if (!process_by_term_window) {
-                break;
-            }
-        }
-        else {
-            bool process_by_frame_window = true;
-            switch (wParam & ~0xF) {
-              case IDM_COPY:
-              case IDM_PASTE:
-                process_by_frame_window = false;
-                break;
-              default:
-                break;
-            }
-            if (!process_by_frame_window) {
-                break;
-            }
-        }
         switch (wParam & ~0xF) {       /* low 4 bits reserved to Windows */
           case SC_VSCROLL:
           case SC_HSCROLL:
@@ -2396,47 +1837,41 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 return result;
             }
             break;
-          case IDM_CLOSESESS: {
-            struct TabBarNotify nmhdr;
-            nmhdr.hdr.hwndFrom = hwnd;
-            nmhdr.hdr.code = TCN_TABDELETE;
-            nmhdr.hdr.idFrom = 0;
-            nmhdr.tab_origin = wgs->tab_index;
-            SendMessage(hwnd, WM_NOTIFY, 0, (LPARAM)(&nmhdr));
+          case IDM_CLOSESESS:
+            close_session(pane, wgs->tab_index);
             break;
-          }
           case IDM_EXIT:
-            PostMessage(hwnd, WM_CLOSE, 0, 0);
+            PostMessage(frame_hwnd, WM_CLOSE, 0, 0);
             break;
           case IDM_SHOWLOG:
-            showeventlog_pp(hwnd, &wgs->eventlogstuff);
+            showeventlog_pp(frame_hwnd, &wgs->eventlogstuff);
             break;
           case IDM_CONFIRM_PASTE:
             confirm_paste = !confirm_paste;
             check_menu_item(IDM_CONFIRM_PASTE, (confirm_paste ? MF_CHECKED : MF_UNCHECKED));
             break;
           case IDM_FIND:
-            show_finddlg(wgs_active);
+            show_finddlg(wgs);
             break;
           case IDM_NEWSESS: {
             Conf *conf = NULL;
             const char *session_name = NULL;
             if (create_conf(NULL, &conf, &session_name)) {
-                add_session(conf, session_name, pointer_array_size(&pointer_array));
+                add_session(pane, conf, session_name, pane_get_session_count(pane));
             }
             break;
           }
           case IDM_DUPSESS: {
             Conf *conf = conf_copy(wgs->conf);
             const char *session_name = dupstr(wgs->session_name);
-            add_session(conf, session_name, wgs->tab_index+1);
+            add_session(pane, conf, session_name, wgs->tab_index+1);
             break;
           }
           case IDM_DUPSESS_SFTP: {
             Conf *conf = conf_copy(wgs->conf);
             conf_set_int(conf, CONF_protocol, PROT_SFTP);
             const char *session_name = dupstr(wgs->session_name);
-            add_session(conf, session_name, wgs->tab_index+1);
+            add_session(pane, conf, session_name, wgs->tab_index+1);
             break;
           }
           case IDM_SAVEDSESS: {
@@ -2447,7 +1882,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             Conf *conf = NULL;
             const char *session_name = NULL;
             if (create_conf(sesslist.sessions[sessno], &conf, &session_name)) {
-                add_session(conf, session_name, pointer_array_size(&pointer_array));
+                add_session(pane, conf, session_name, pane_get_session_count(pane));
             }
             break;
           }
@@ -2522,14 +1957,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 term_pwron(wgs->term, false);
                 start_backend(wgs);
                 if (wgs->backend) {
-                    tab_bar_set_tab_unusable(&tabbar, wgs->tab_index, false);
+                    pane_set_session_unusable(pane_get_from_term_hwnd(hwnd), wgs->tab_index, false);
                 }
             }
 
             break;
           case IDM_RECONF: {
             Conf *prev_conf;
-            int init_lvl = 1;
             bool reconfig_result;
 
             term_pre_reconfig(wgs->term, wgs->conf);
@@ -2547,21 +1981,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             if (strcmp(session_name, wgs->session_name) == 0) {
                 sfree((char *)session_name);
             } else {
-                char *tab_title = create_tab_title(wgs->session_id, session_name);
-                tab_bar_set_tab_title(&tabbar, wgs->tab_index, tab_title);
+                char *tab_title = create_session_title(wgs->session_id, session_name);
+                pane_set_session_title(pane_get_from_term_hwnd(hwnd), wgs->tab_index, tab_title);
                 sfree(tab_title);
                 sfree((char *) wgs->session_name);
                 wgs->session_name = session_name;
             }
 
             conf_cache_data(wgs);
-
-            resize_action = conf_get_int(wgs->conf, CONF_resize_action);
-            {
-              /* Gracefully unzoom if necessary */
-              if (IsZoomed(hwnd) && (resize_action == RESIZE_DISABLED))
-                  ShowWindow(hwnd, SW_RESTORE);
-            }
 
             /* Pass new config data to the logging module */
             log_reconfig(wgs->logctx, wgs->conf);
@@ -2596,66 +2023,48 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             if (wgs->backend)
                 backend_reconfig(wgs->backend, wgs->conf);
 
-            /* Screen size changed ? */
-            if (conf_get_int(wgs->conf, CONF_height) !=
-                conf_get_int(prev_conf, CONF_height) ||
-                conf_get_int(wgs->conf, CONF_width) !=
-                conf_get_int(prev_conf, CONF_width) ||
-                conf_get_int(wgs->conf, CONF_savelines) !=
-                conf_get_int(prev_conf, CONF_savelines) ||
-                resize_action == RESIZE_FONT ||
-                (resize_action == RESIZE_EITHER && IsZoomed(hwnd)) ||
-                resize_action == RESIZE_DISABLED) {
-                term_size(wgs->term, conf_get_int(wgs->conf, CONF_height),
-                          conf_get_int(wgs->conf, CONF_width),
+            if (conf_get_int(wgs->conf, CONF_savelines) != conf_get_int(prev_conf, CONF_savelines)) {
+                term_size(wgs->term, wgs->term->rows, wgs->term->cols,
                           conf_get_int(wgs->conf, CONF_savelines));
-                refresh_find_match_mask(wgs);
             }
 
-            /* Enable or disable the scroll bar, etc */
-            {
-                if (set_frame_style(wgs->conf)) {
-                    init_lvl = 2;
+            FontSpec *font = conf_get_fontspec(wgs->conf, CONF_font);
+            FontSpec *prev_font = conf_get_fontspec(prev_conf, CONF_font);
+            bool font_changed = (
+                strcmp(font->name, prev_font->name) != 0 ||
+                strcmp(conf_get_str(wgs->conf, CONF_line_codepage), conf_get_str(prev_conf, CONF_line_codepage)) != 0 ||
+                font->isbold != prev_font->isbold ||
+                font->height != prev_font->height ||
+                font->charset != prev_font->charset ||
+                conf_get_int(wgs->conf, CONF_font_quality) != conf_get_int(prev_conf, CONF_font_quality) ||
+                conf_get_int(wgs->conf, CONF_vtmode) != conf_get_int(prev_conf, CONF_vtmode) ||
+                conf_get_int(wgs->conf, CONF_bold_style) != conf_get_int(prev_conf, CONF_bold_style));
+
+            bool reinit_term = conf_get_int(wgs->conf, CONF_resize_action) != conf_get_int(prev_conf, CONF_resize_action) ||
+                                conf_get_int(wgs->conf, CONF_width) != conf_get_int(prev_conf, CONF_width) ||
+                                conf_get_int(wgs->conf, CONF_height) != conf_get_int(prev_conf, CONF_height) ||
+                                font_changed;
+            bool redraw_term = conf_get_int(wgs->conf, CONF_window_border) != conf_get_int(prev_conf, CONF_window_border) ||
+                                conf_get_bool(wgs->conf, CONF_scrollbar) != conf_get_bool(prev_conf, CONF_scrollbar) ||
+                                conf_get_bool(wgs->conf, CONF_scrollbar_in_fullscreen) != conf_get_bool(prev_conf, CONF_scrollbar_in_fullscreen) ||
+                                conf_get_bool(wgs->conf, CONF_sunken_edge) != conf_get_bool(prev_conf, CONF_sunken_edge);
+            if (reinit_term || redraw_term) {
+                set_term_hwnd_style(focused_pane, pane_get_active_session(focused_pane));
+                if (reinit_term && focused_pane == split_get_pane(root_split) && !is_zoomed && !is_fullscr) {
+                    WinGuiSession *wgs = pane_get_active_session(focused_pane);
+                    deinit_fonts(wgs);
+                    init_fonts(wgs, 0, 0);
+                    init_term_dimensions(wgs);
+                    snap_frame_to_term(focused_pane);
+                } else {
+                    RECT rect;
+                    pane_get_term_rect(focused_pane, &rect);
+                    resize_term_dimensions(pane_get_active_session(focused_pane), &rect);
+                    InvalidateRect(pane_get_term_hwnd(focused_pane), NULL, TRUE);
                 }
+            } else {
+                InvalidateRect(pane_get_term_hwnd(focused_pane), NULL, TRUE);
             }
-
-            /* Oops */
-            if (resize_action == RESIZE_DISABLED && IsZoomed(hwnd)) {
-              force_normal(hwnd);
-              init_lvl = 2;
-            }
-
-            {
-              FontSpec *font = conf_get_fontspec(wgs->conf, CONF_font);
-              FontSpec *prev_font = conf_get_fontspec(prev_conf,
-                                                      CONF_font);
-
-              if (!strcmp(font->name, prev_font->name) ||
-                  !strcmp(conf_get_str(wgs->conf, CONF_line_codepage),
-                          conf_get_str(prev_conf, CONF_line_codepage)) ||
-                  font->isbold != prev_font->isbold ||
-                  font->height != prev_font->height ||
-                  font->charset != prev_font->charset ||
-                  conf_get_int(wgs->conf, CONF_font_quality) !=
-                  conf_get_int(prev_conf, CONF_font_quality) ||
-                  conf_get_int(wgs->conf, CONF_vtmode) !=
-                  conf_get_int(prev_conf, CONF_vtmode) ||
-                  conf_get_int(wgs->conf, CONF_bold_style) !=
-                  conf_get_int(prev_conf, CONF_bold_style)) {
-                  init_lvl = 2;
-                  wgs->resize_either.font_width = 0;
-                  wgs->resize_either.font_height = 0;
-              }
-              if (resize_action == RESIZE_DISABLED ||
-                  resize_action == RESIZE_EITHER ||
-                  resize_action != conf_get_int(prev_conf,
-                                                CONF_resize_action))
-                  init_lvl = 2;
-            }
-
-            InvalidateRect(hwnd, NULL, true);
-            reset_window(wgs, init_lvl);
-
             conf_free(prev_conf);
             break;
           }
@@ -2682,28 +2091,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
           case IDM_HELP:
             launch_help(hwnd, NULL);
             break;
-          case SC_MOUSEMENU:
-            /*
-             * We get this if the System menu has been activated
-             * using the mouse.
-             */
-            show_mouseptr(wgs, true);
-            break;
           case SC_KEYMENU:
-            /*
-             * We get this if the System menu has been activated
-             * using the keyboard. This might happen from within
-             * TranslateKey, in which case it really wants to be
-             * followed by a `space' character to actually _bring
-             * the menu up_ rather than just sitting there in
-             * `ready to appear' state.
-             */
-            show_mouseptr(wgs, true);    /* make sure pointer is visible */
-            if( lParam == 0 )
-                PostMessage(hwnd, WM_CHAR, ' ', 0);
-            break;
+            SendMessage(frame_hwnd, message, wParam, lParam);
+            return 0;
           case IDM_FULLSCREEN:
             flip_full_screen();
+            break;
+          case IDM_ALWAYSONTOP:
+            flip_always_on_top();
             break;
           default:
             if (wParam >= IDM_SAVED_MIN && wParam < IDM_SAVED_MAX) {
@@ -2738,9 +2133,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
       case WM_LBUTTONUP:
       case WM_MBUTTONUP:
       case WM_RBUTTONUP:
-        if (!is_term_hwnd) {
-          return 0;
-        }
+        change_focused_pane(pane_get_from_term_hwnd(hwnd));
         if (message == WM_RBUTTONDOWN &&
             ((wParam & MK_CONTROL) ||
              (conf_get_int(wgs->conf, CONF_mouse_is_xterm) == MOUSE_WINDOWS))) {
@@ -2797,45 +2190,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                 press = false;
             }
             show_mouseptr(wgs, true);
-            /*
-             * Special case: in full-screen mode, if the left
-             * button is clicked in the very top left corner of the
-             * window, we put up the System menu instead of doing
-             * selection.
-             */
-            {
-                bool mouse_on_hotspot = false;
-                POINT pt;
-
-                GetCursorPos(&pt);
-#ifndef NO_MULTIMON
-                if (p_GetMonitorInfoA && p_MonitorFromPoint) {
-                    HMONITOR mon;
-                    MONITORINFO mi;
-
-                    mon = p_MonitorFromPoint(pt, MONITOR_DEFAULTTONULL);
-
-                    if (mon != NULL) {
-                        mi.cbSize = sizeof(MONITORINFO);
-                        p_GetMonitorInfoA(mon, &mi);
-
-                        if (mi.rcMonitor.left == pt.x &&
-                            mi.rcMonitor.top == pt.y) {
-                            mouse_on_hotspot = true;
-                        }
-                    }
-                } else
-#endif
-                if (pt.x == 0 && pt.y == 0) {
-                    mouse_on_hotspot = true;
-                }
-                if (is_full_screen() && press &&
-                    button == MBT_LEFT && mouse_on_hotspot) {
-                    SendMessage(hwnd, WM_SYSCOMMAND, SC_MOUSEMENU,
-                                MAKELPARAM(pt.x, pt.y));
-                    return 0;
-                }
-            }
 
             if (press) {
                 click(wgs, button,
@@ -2854,28 +2208,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         }
         return 0;
       case WM_MOUSEMOVE: {
-        if (!is_term_hwnd) {
-          return 0;
+        POINT pt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        MapWindowPoints(hwnd, frame_hwnd, &pt, 1);
+        SendMessage(frame_hwnd, WM_MOUSEMOVE, wParam, MAKELPARAM(pt.x, pt.y));
         }
-        /*
-         * Windows seems to like to occasionally send MOUSEMOVE
-         * events even if the mouse hasn't moved. Don't unhide
-         * the mouse pointer in this case.
-         */
-        if (last_mousemove != WM_MOUSEMOVE ||
-            wParam != last_wm_mousemove_wParam ||
-            lParam != last_wm_mousemove_lParam) {
-          show_mouseptr(wgs, true);
-          last_mousemove = WM_MOUSEMOVE;
-          last_wm_mousemove_wParam = wParam;
-          last_wm_mousemove_lParam = lParam;
-        }
-        /*
-         * Add the mouse position and message time to the random
-         * number noise.
-         */
-        noise_ultralight(NOISE_SOURCE_MOUSEPOS, lParam);
-
         if (wParam & (MK_LBUTTON | MK_MBUTTON | MK_RBUTTON) &&
             GetCapture() == hwnd) {
             Mouse_Button b;
@@ -2896,39 +2232,21 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
                        false, false);
         }
         return 0;
-      }
-      case WM_NCMOUSEMOVE:
-        if (is_term_hwnd) {
-          return 0;
-        }
-        if (last_mousemove != WM_NCMOUSEMOVE ||
-            wParam != last_wm_ncmousemove_wParam ||
-            lParam != last_wm_ncmousemove_lParam) {
-          show_mouseptr(wgs, true);
-          last_mousemove = WM_NCMOUSEMOVE;
-          last_wm_ncmousemove_wParam = wParam;
-          last_wm_ncmousemove_lParam = lParam;
-        }
-        noise_ultralight(NOISE_SOURCE_MOUSEPOS, lParam);
+      case WM_NCMOUSEMOVE: {
+        POINT pt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        ScreenToClient(frame_hwnd, &pt);
+        SendMessage(frame_hwnd, WM_NCMOUSEMOVE, wParam, MAKELPARAM(pt.x, pt.y));
         return 0;
+      }
       case WM_IGNORE_CLIP:
-        if (!is_term_hwnd) {
-          return 0;
-        }
         wgs->ignore_clip = wParam; /* don't panic on DESTROYCLIPBOARD */
         break;
       case WM_DESTROYCLIPBOARD:
-        if (!is_term_hwnd) {
-          return 0;
-        }
         if (!wgs->ignore_clip)
             term_lost_clipboard_ownership(wgs->term, CLIP_SYSTEM);
         wgs->ignore_clip = false;
         return 0;
       case WM_PAINT: {
-        if (!is_term_hwnd) {
-          break;
-        }
         PAINTSTRUCT p;
 
         HideCaret(hwnd);
@@ -3028,303 +2346,42 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         ShowCaret(hwnd);
         return 0;
       }
-      case WM_NETEVENT:
-      case WM_DONE_WITH_SOCKET:
-        if (is_term_hwnd) {
-          return 0;
-        }
-        winselgui_response(message, wParam, lParam);
-        return 0;
       case WM_SETFOCUS:
-        if (!is_term_hwnd) {
-          SetFocus(term_hwnd);
-          break;
-        }
         term_set_focus(wgs->term, true);
         CreateCaret(hwnd, wgs->caretbm, wgs->font_width, wgs->font_height);
         ShowCaret(hwnd);
         flash_window(0);               /* stop */
         wgs->compose_state = 0;
         term_update(wgs->term);
+        set_title_from_session(wgs);
+        set_icon_title_from_session(wgs);
         break;
       case WM_KILLFOCUS:
-        if (!is_term_hwnd) {
-          break;
-        }
-        show_mouseptr(wgs, true);
-        term_set_focus(wgs->term, false);
+        pane_set_focused(pane, false);
         DestroyCaret();
-        wgs->caret_x = wgs->caret_y = -1; /* ensure caret replaced next time */
-        term_update(wgs->term);
-        break;
-      case WM_ENTERSIZEMOVE:
-        if (is_term_hwnd) {
-          break;
+        if (wgs) {
+            show_mouseptr(wgs, true);
+            term_set_focus(wgs->term, false);
+            wgs->caret_x = wgs->caret_y = -1; /* ensure caret replaced next time */
+            term_update(wgs->term);
         }
-        EnableSizeTip(true);
-        resizing = true;
-        wgs->need_backend_resize = false;
-        break;
-      case WM_EXITSIZEMOVE:
-        if (is_term_hwnd) {
-          break;
-        }
-        EnableSizeTip(false);
-        resizing = false;
-        if (wgs->need_backend_resize) {
-            term_size(wgs->term, conf_get_int(wgs->conf, CONF_height),
-                      conf_get_int(wgs->conf, CONF_width),
-                      conf_get_int(wgs->conf, CONF_savelines));
-            refresh_find_match_mask(wgs);
-            InvalidateRect(term_hwnd, NULL, true);
-        }
-        recompute_window_offset(wgs);
-        break;
-      case WM_SIZING:
-        if (is_term_hwnd) {
-          break;
-        }
-        /*
-         * This does two jobs:
-         * 1) Keep the sizetip uptodate
-         * 2) Make sure the window size is _stepped_ in units of the font size.
-         */
-        resize_action = conf_get_int(wgs->conf, CONF_resize_action);
-        if (resize_action == RESIZE_TERM ||
-            (resize_action == RESIZE_EITHER && !is_alt_pressed())) {
-            int width, height, w, h, ew, eh;
-            LPRECT r = (LPRECT) lParam;
-
-            if (!wgs->need_backend_resize && resize_action == RESIZE_EITHER &&
-                (conf_get_int(wgs->conf, CONF_height) != wgs->term->rows ||
-                 conf_get_int(wgs->conf, CONF_width) != wgs->term->cols)) {
-                /*
-                 * Great! It seems that both the terminal size and the
-                 * font size have been changed and the user is now dragging.
-                 *
-                 * It will now be difficult to get back to the configured
-                 * font size!
-                 *
-                 * This would be easier but it seems to be too confusing.
-                 */
-                conf_set_int(wgs->conf, CONF_height, wgs->term->rows);
-                conf_set_int(wgs->conf, CONF_width, wgs->term->cols);
-
-                InvalidateRect(term_hwnd, NULL, true);
-                wgs->need_backend_resize = true;
-            }
-
-            width = r->right - r->left - extra_width;
-            height = r->bottom - r->top - extra_height;
-            w = (width + wgs->font_width / 2) / wgs->font_width;
-            if (w < 1)
-                w = 1;
-            h = (height + wgs->font_height / 2) / wgs->font_height;
-            if (h < 1)
-                h = 1;
-            UpdateSizeTip(hwnd, w, h);
-            ew = width - w * wgs->font_width;
-            eh = height - h * wgs->font_height;
-            if (ew != 0) {
-                if (wParam == WMSZ_LEFT ||
-                    wParam == WMSZ_BOTTOMLEFT || wParam == WMSZ_TOPLEFT)
-                    r->left += ew;
-                else
-                    r->right -= ew;
-            }
-            if (eh != 0) {
-                if (wParam == WMSZ_TOP ||
-                    wParam == WMSZ_TOPRIGHT || wParam == WMSZ_TOPLEFT)
-                    r->top += eh;
-                else
-                    r->bottom -= eh;
-            }
-            if (ew || eh)
-                return 1;
-            else
-                return 0;
-        } else {
-            int width, height, w, h, rv = 0;
-            int window_border = conf_get_int(wgs->conf, CONF_window_border);
-            int ex_width = extra_width +
-                (window_border - wgs->offset_width) * 2;
-            int ex_height = extra_height +
-                (window_border - wgs->offset_height) * 2;
-            LPRECT r = (LPRECT) lParam;
-
-            width = r->right - r->left - ex_width;
-            height = r->bottom - r->top - ex_height;
-
-            w = (width + wgs->term->cols/2)/wgs->term->cols;
-            h = (height + wgs->term->rows/2)/wgs->term->rows;
-            if ( r->right != r->left + w*wgs->term->cols + ex_width)
-                rv = 1;
-
-            if (wParam == WMSZ_LEFT ||
-                wParam == WMSZ_BOTTOMLEFT || wParam == WMSZ_TOPLEFT)
-                r->left = r->right - w*wgs->term->cols - ex_width;
-            else
-                r->right = r->left + w*wgs->term->cols + ex_width;
-
-            if (r->bottom != r->top + h*wgs->term->rows + ex_height)
-                rv = 1;
-
-            if (wParam == WMSZ_TOP ||
-                wParam == WMSZ_TOPRIGHT || wParam == WMSZ_TOPLEFT)
-                r->top = r->bottom - h*wgs->term->rows - ex_height;
-            else
-                r->bottom = r->top + h*wgs->term->rows + ex_height;
-
-            return rv;
-        }
-        /* break;  (never reached) */
-      case WM_FULLSCR_ON_MAX:
-        if (is_term_hwnd) {
-          break;
-        }
-        fullscr_on_max = true;
         break;
       case WM_MOVE:
-        if (is_term_hwnd) {
-          break;
+        if (wgs) {
+            term_notify_window_pos(wgs->term, LOWORD(lParam), HIWORD(lParam));
         }
-        term_notify_window_pos(wgs->term, LOWORD(lParam), HIWORD(lParam));
-        sys_cursor_update(wgs);
-        finddlg_pin_to_frame();
         break;
       case WM_SIZE:
-        if (is_term_hwnd) {
-          break;
+        if (wgs) {
+            term_notify_window_size_pixels(wgs->term, HIWORD(wParam), LOWORD(wParam));
+            RECT rect;
+            GetClientRect(hwnd, &rect);
+            resize_term_dimensions(wgs, &rect);
+            InvalidateRect(hwnd, NULL, TRUE);
+            sys_cursor_update(wgs);
         }
-        resize_action = conf_get_int(wgs->conf, CONF_resize_action);
-        term_notify_minimised(wgs->term, wParam == SIZE_MINIMIZED);
-        {
-            /*
-             * WM_SIZE's lParam tells us the size of the client area.
-             * But historic PuTTY practice is that we want to tell the
-             * terminal the size of the overall window.
-             */
-            RECT r;
-            GetWindowRect(hwnd, &r);
-            term_notify_window_size_pixels(
-                wgs->term, r.right - r.left, r.bottom - r.top);
-        }
-        if (wParam == SIZE_MINIMIZED)
-            SetWindowTextW(hwnd,
-                          conf_get_bool(wgs->conf, CONF_win_name_always) ?
-                          wgs->window_name : wgs->icon_name);
-        if (wParam == SIZE_RESTORED || wParam == SIZE_MAXIMIZED)
-            SetWindowTextW(hwnd, wgs->window_name);
-        if (wParam == SIZE_RESTORED) {
-            processed_resize = false;
-            clear_full_screen();
-            if (processed_resize) {
-                /*
-                 * Inhibit normal processing of this WM_SIZE; a
-                 * secondary one was triggered just now by
-                 * clear_full_screen which contained the correct
-                 * client area size.
-                 */
-                return 0;
-            }
-        }
-        if (wParam == SIZE_MAXIMIZED && fullscr_on_max) {
-            fullscr_on_max = false;
-            processed_resize = false;
-            make_full_screen();
-            if (processed_resize) {
-                /*
-                 * Inhibit normal processing of this WM_SIZE; a
-                 * secondary one was triggered just now by
-                 * make_full_screen which contained the correct client
-                 * area size.
-                 */
-                return 0;
-            }
-        }
-
-        processed_resize = true;
-
-        if (resize_action == RESIZE_DISABLED) {
-            /* A resize, well it better be a minimize. */
-            reset_window(wgs, -1);
-        } else {
-            if (wParam == SIZE_MAXIMIZED) {
-                was_zoomed = true;
-                wgs->resize_either.was_zoomed = true;
-                wgs->resize_either.font_width = wgs->font_width;
-                wgs->resize_either.font_height = wgs->font_height;
-                if (resize_action == RESIZE_TERM)
-                    wm_size_resize_term(wgs, lParam);
-                reset_window(wgs, 0);
-                tab_bar_adjust_window_old();
-                finddlg_adjust_to_frame();
-                adjust_terminal_window(frame_hwnd, term_hwnd);
-            } else if (wParam == SIZE_RESTORED && was_zoomed) {
-                was_zoomed = false;
-                wgs->resize_either.was_zoomed = false;
-                if (resize_action == RESIZE_TERM) {
-                    wm_size_resize_term(wgs, lParam);
-                    reset_window(wgs, 1);
-                } else if (resize_action != RESIZE_FONT)
-                    reset_window(wgs, 2);
-                else
-                    reset_window(wgs, 0);
-                tab_bar_adjust_window_old();
-                finddlg_adjust_to_frame();
-                adjust_terminal_window(frame_hwnd, term_hwnd);
-            } else if (wParam == SIZE_MINIMIZED) {
-                /* do nothing */
-            } else if (resize_action == RESIZE_TERM ||
-                       (resize_action == RESIZE_EITHER &&
-                        !is_alt_pressed())) {
-                wm_size_resize_term(wgs, lParam);
-
-                /*
-                 * Sometimes, we can get a spontaneous resize event
-                 * outside a WM_SIZING interactive drag which wants to
-                 * set us to a new specific SIZE_RESTORED size. An
-                 * example is what happens if you press Windows+Right
-                 * and then Windows+Up: the first operation fits the
-                 * window to the right-hand half of the screen, and
-                 * the second one changes that for the top right
-                 * quadrant. In that situation, if we've responded
-                 * here by resizing the terminal, we may still need to
-                 * recompute the border around the window and do a
-                 * full redraw to clear the new border.
-                 */
-                if (!resizing)
-                    recompute_window_offset(wgs);
-                tab_bar_adjust_window_old();
-                finddlg_adjust_to_frame();
-                adjust_terminal_window(frame_hwnd, term_hwnd);
-            } else {
-                reset_window(wgs, 0);
-                tab_bar_adjust_window_old();
-                finddlg_adjust_to_frame();
-                adjust_terminal_window(frame_hwnd, term_hwnd);
-            }
-        }
-        sys_cursor_update(wgs);
-        return 0;
-      case WM_DPICHANGED:
-        if (is_term_hwnd) {
-          break;
-        }
-        dpi_info.x = LOWORD(wParam);
-        dpi_info.y = HIWORD(wParam);
-        dpi_changed_new_wnd_rect = *(RECT*)(lParam);
-        DeleteObject(tab_bar_font);
-        tab_bar_font = get_dpi_aware_tab_bar_font();
-        tab_bar_common_dpi_changed(tab_bar_font);
-        tab_bar_dpi_changed(&tabbar);
-        finddlg_adjust_to_frame();
-        reset_window(wgs, 3);
         return 0;
       case WM_VSCROLL: {
-        if (is_term_hwnd) {
-          break;
-        }
         int disptop = wgs->term->disptop;
         switch (LOWORD(wParam)) {
           case SB_BOTTOM:
@@ -3412,10 +2469,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         break;
       }
       case WM_PALETTECHANGED:
-        if (!is_term_hwnd) {
-          SendMessage(term_hwnd, message, wParam, lParam);
-          break;
-        }
         if ((HWND) wParam != hwnd && wgs->pal != NULL) {
             HDC hdc = make_hdc(wgs);
             if (hdc) {
@@ -3426,10 +2479,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         }
         break;
       case WM_QUERYNEWPALETTE:
-        if (!is_term_hwnd) {
-          SendMessage(term_hwnd, message, wParam, lParam);
-          return false;
-        }
         if (wgs->pal != NULL) {
             HDC hdc = make_hdc(wgs);
             if (hdc) {
@@ -3444,9 +2493,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
       case WM_SYSKEYDOWN:
       case WM_KEYUP:
       case WM_SYSKEYUP:
-        if (!is_term_hwnd) {
-          return 0;
-        }
         /*
          * Add the scan code and keypress timing to the random
          * number noise.
@@ -3503,28 +2549,18 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         }
         return 0;
       case WM_INPUTLANGCHANGE:
-        if (!is_term_hwnd) {
-          SendMessage(term_hwnd, message, wParam, lParam);
-          break;
-        }
         /* wParam == Font number */
         /* lParam == Locale */
         set_input_locale((HKL)lParam);
         sys_cursor_update(wgs);
         break;
       case WM_IME_STARTCOMPOSITION: {
-        if (!is_term_hwnd) {
-          break;
-        }
         HIMC hImc = ImmGetContext(hwnd);
         ImmSetCompositionFont(hImc, &wgs->lfont);
         ImmReleaseContext(hwnd, hImc);
         break;
       }
       case WM_IME_COMPOSITION: {
-        if (!is_term_hwnd) {
-          return 0;
-        }
         HIMC hIMC;
         int n;
         char *buff;
@@ -3577,9 +2613,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
       }
 
       case WM_IME_CHAR:
-        if (!is_term_hwnd) {
-          return 0;
-        }
         if (wParam & 0xFF00) {
             char buf[2];
 
@@ -3602,9 +2635,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         return (0);
       case WM_CHAR:
       case WM_SYSCHAR:
-        if (!is_term_hwnd) {
-          return 0;
-        }
         /*
          * Nevertheless, we are prepared to deal with WM_CHAR
          * messages, should they crop up. So if someone wants to
@@ -3631,10 +2661,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         }
         return 0;
       case WM_SYSCOLORCHANGE:
-        if (!is_term_hwnd) {
-          SendMessage(term_hwnd, message, wParam, lParam);
-          break;
-        }
         if (conf_get_bool(wgs->conf, CONF_system_colour)) {
             /* Refresh palette from system colours. */
             term_notify_palette_changed(wgs->term);
@@ -3644,14 +2670,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         }
         break;
       case WM_GOT_CLIPDATA:
-        if (!is_term_hwnd) {
-          return 0;
-        }
         paste_clipdata(wgs->term, wParam, lParam);
         return 0;
       case WM_TAB_CYCLE: {
-        int count = pointer_array_size(&pointer_array);
-        int current = tab_bar_get_active_tab(&tabbar);
+        Pane *pane = pane_get_from_term_hwnd(hwnd);
+        int count = pane_get_session_count(pane);
+        int current = pane_get_active_session_index(pane);
         int new = current + (wParam == 0 ? 1 : -1);
         if (new < 0) {
             new = count - 1;
@@ -3659,17 +2683,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             new = 0;
         }
         if (new != current) {
-            tab_bar_select_tab(&tabbar, new);
-            activate_session((WinGuiSession *)pointer_array_get(&pointer_array, new));
+            activate_session(pane, new);
         }
         return 0;
       }
       default:
         if (message == wm_mousewheel || message == WM_MOUSEWHEEL
                                                 || message == WM_MOUSEHWHEEL) {
-            if (!is_term_hwnd) {
-              return 0;
-            }
             bool shift_pressed = false, control_pressed = false;
 
             if (message == WM_MOUSEWHEEL || message == WM_MOUSEHWHEEL) {
@@ -4732,7 +3752,7 @@ static int TranslateKey(WinGuiSession *wgs, UINT message, WPARAM wParam,
             return 0;
         }
         if (wParam == 'F' && shift_state == 3) {
-            show_finddlg(wgs_active);
+            show_finddlg(wgs);
             return 0;
         }
         if (wParam == VK_TAB) {
@@ -5134,7 +4154,7 @@ static void wintw_set_title(TermWin *tw, const char *title, int codepage)
     }
     sfree(wgs->window_name);
     wgs->window_name = new_window_name;
-    if (wgs != wgs_active) {return;}
+    if (wgs != pane_get_active_session(focused_pane)) {return;}
     set_title_from_session(wgs);
 }
 
@@ -5154,17 +4174,15 @@ static void wintw_set_icon_title(TermWin *tw, const char *title, int codepage)
 static void wintw_set_scrollbar(TermWin *tw, int total, int start, int page)
 {
     WinGuiSession *wgs = container_of(tw, WinGuiSession, termwin);
-    if (wgs != wgs_active) {return;}
-    if (!conf_get_bool(wgs->conf, is_full_screen() ?
-                       CONF_scrollbar_in_fullscreen : CONF_scrollbar))
-        return;
-    set_scrollbar(total, start, page, true);
+    if (wgs != pane_get_active_session(wgs->pane)) {return;}
+    if (!is_scrollbar_visible(wgs->pane, wgs)) {return;}
+    pane_set_scrollbar(wgs->pane, total, start, page, true);
 }
 
 static bool wintw_setup_draw_ctx(TermWin *tw)
 {
     WinGuiSession *wgs = container_of(tw, WinGuiSession, termwin);
-    if (wgs != wgs_active) {return false;}
+    if (wgs != pane_get_active_session(wgs->pane)) {return false;}
     if (wgs->find.data_arrived) {
         wgs->find.data_arrived = false;
         refresh_find_match_mask(wgs);
@@ -5220,7 +4238,7 @@ static void wintw_palette_set(TermWin *tw, unsigned start,
             RGB(in->r, in->g, in->b) ^ wgs->colorref_modifier;
     }
 
-    if (wgs != wgs_active) {return;}
+    if (wgs != pane_get_active_session(wgs->pane)) {return;}
     realize_palette(wgs);
 
     if (start <= OSC4_COLOUR_bg && OSC4_COLOUR_bg < start + ncolours) {
@@ -5778,7 +4796,7 @@ void modalfatalbox(const char *fmt, ...)
     va_start(ap, fmt);
     message = dupvprintf(fmt, ap);
     va_end(ap);
-    show_mouseptr(wgs_active, true);
+    show_mouseptr(pane_get_active_session(focused_pane), true);
     title = dupprintf("%s Fatal Error", appname);
     MessageBox(frame_hwnd, message, title,
                MB_SYSTEMMODAL | MB_ICONERROR | MB_OK);
@@ -5798,7 +4816,7 @@ void nonfatal(const char *fmt, ...)
     va_start(ap, fmt);
     message = dupvprintf(fmt, ap);
     va_end(ap);
-    show_mouseptr(wgs_active, true);
+    show_mouseptr(pane_get_active_session(focused_pane), true);
     title = dupprintf("%s Error", appname);
     MessageBox(frame_hwnd, message, title, MB_ICONERROR | MB_OK);
     sfree(message);
@@ -5838,7 +4856,7 @@ static void flash_window_timer(void *ctx, unsigned long now)
  */
 static void flash_window(int mode)
 {
-    WinGuiSession *wgs = wgs_active;
+    WinGuiSession *wgs = pane_get_active_session(focused_pane);
     int beep_ind = conf_get_int(wgs->conf, CONF_beep_ind);
     if ((mode == 0) || (beep_ind == B_IND_DISABLED)) {
         /* stop */
@@ -5888,7 +4906,7 @@ static void flash_window(int mode)
 static void wintw_bell(TermWin *tw, int mode)
 {
     WinGuiSession *wgs = container_of(tw, WinGuiSession, termwin);
-    if (wgs != wgs_active) {return;}
+    if (wgs != pane_get_active_session(focused_pane)) {return;}
     if (mode == BELL_DEFAULT) {
         /*
          * For MessageBeep style bells, we want to be careful of
@@ -5957,15 +4975,6 @@ static void wintw_bell(TermWin *tw, int mode)
  */
 static void wintw_set_minimised(TermWin *tw, bool minimised)
 {
-    WinGuiSession *wgs = container_of(tw, WinGuiSession, termwin);
-    if (wgs != wgs_active) {return;}
-    if (IsIconic(frame_hwnd)) {
-        if (!minimised)
-            ShowWindow(frame_hwnd, SW_RESTORE);
-    } else {
-        if (minimised)
-            ShowWindow(frame_hwnd, SW_MINIMIZE);
-    }
 }
 
 /*
@@ -5973,15 +4982,6 @@ static void wintw_set_minimised(TermWin *tw, bool minimised)
  */
 static void wintw_move(TermWin *tw, int x, int y)
 {
-    WinGuiSession *wgs = container_of(tw, WinGuiSession, termwin);
-    if (wgs != wgs_active) {return;}
-    int resize_action = conf_get_int(wgs->conf, CONF_resize_action);
-    if (resize_action == RESIZE_DISABLED ||
-        resize_action == RESIZE_FONT ||
-        IsZoomed(frame_hwnd))
-       return;
-
-    SetWindowPos(frame_hwnd, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
 }
 
 /*
@@ -5990,12 +4990,6 @@ static void wintw_move(TermWin *tw, int x, int y)
  */
 static void wintw_set_zorder(TermWin *tw, bool top)
 {
-    WinGuiSession *wgs = container_of(tw, WinGuiSession, termwin);
-    if (wgs != wgs_active) {return;}
-    if (conf_get_bool(wgs->conf, CONF_alwaysontop))
-        return;                        /* ignore */
-    SetWindowPos(frame_hwnd, top ? HWND_TOP : HWND_BOTTOM, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE);
 }
 
 /*
@@ -6004,7 +4998,7 @@ static void wintw_set_zorder(TermWin *tw, bool top)
 static void wintw_refresh(TermWin *tw)
 {
     WinGuiSession *wgs = container_of(tw, WinGuiSession, termwin);
-    if (wgs != wgs_active) {return;}
+    if (wgs != pane_get_active_session(wgs->pane)) {return;}
     InvalidateRect(wgs->term_hwnd, NULL, true);
 }
 
@@ -6014,27 +5008,6 @@ static void wintw_refresh(TermWin *tw)
  */
 static void wintw_set_maximised(TermWin *tw, bool maximised)
 {
-    WinGuiSession *wgs = container_of(tw, WinGuiSession, termwin);
-    if (wgs != wgs_active) {return;}
-    if (IsZoomed(frame_hwnd)) {
-        if (!maximised)
-            ShowWindow(frame_hwnd, SW_RESTORE);
-    } else {
-        if (maximised)
-            ShowWindow(frame_hwnd, SW_MAXIMIZE);
-    }
-}
-
-/*
- * See if we're in full-screen mode.
- */
-static bool is_full_screen()
-{
-    if (!IsZoomed(frame_hwnd))
-        return false;
-    if (GetWindowLongPtr(frame_hwnd, GWL_STYLE) & WS_CAPTION)
-        return false;
-    return true;
 }
 
 /* Get a MONITORINFO structure for the nearest available monitor, if the
@@ -6094,101 +5067,18 @@ static bool get_fullscreen_rect(RECT *ss)
      return GetClientRect(GetDesktopWindow(), ss);
  }
 
-
-/*
- * Go full-screen. This should only be called when we are already
- * maximised.
- */
-static void make_full_screen()
-{
-    WinGuiSession *wgs = wgs_active;
-    DWORD style;
-        RECT ss;
-
-    assert(IsZoomed(frame_hwnd));
-
-        if (is_full_screen())
-                return;
-
-    /* Remove the window furniture. */
-    style = GetWindowLongPtr(frame_hwnd, GWL_STYLE);
-    style &= ~(WS_CAPTION | WS_BORDER | WS_THICKFRAME);
-    if (conf_get_bool(wgs->conf, CONF_scrollbar_in_fullscreen))
-        style |= WS_VSCROLL;
-    else
-        style &= ~WS_VSCROLL;
-    SetWindowLongPtr(frame_hwnd, GWL_STYLE, style);
-
-    /* Resize ourselves to exactly cover the nearest monitor. */
-        get_fullscreen_rect(&ss);
-    SetWindowPos(frame_hwnd, HWND_TOP, ss.left, ss.top,
-                 ss.right - ss.left, ss.bottom - ss.top, SWP_FRAMECHANGED);
-
-    /* We may have changed size as a result */
-
-    reset_window(wgs, 0);
-
-    /* Tick the menu item in the System and context menus. */
-    check_menu_item(IDM_FULLSCREEN, MF_CHECKED);
-}
-
-/*
- * Clear the full-screen attributes.
- */
-static void clear_full_screen()
-{
-    WinGuiSession *wgs = wgs_active;
-    DWORD oldstyle, style;
-
-    /* Reinstate the window furniture. */
-    style = oldstyle = GetWindowLongPtr(frame_hwnd, GWL_STYLE);
-    style |= WS_CAPTION | WS_BORDER;
-    if (conf_get_int(wgs->conf, CONF_resize_action) == RESIZE_DISABLED)
-        style &= ~WS_THICKFRAME;
-    else
-        style |= WS_THICKFRAME;
-    if (conf_get_bool(wgs->conf, CONF_scrollbar))
-        style |= WS_VSCROLL;
-    else
-        style &= ~WS_VSCROLL;
-    if (style != oldstyle) {
-        SetWindowLongPtr(frame_hwnd, GWL_STYLE, style);
-        SetWindowPos(frame_hwnd, NULL, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
-                     SWP_FRAMECHANGED);
-    }
-
-    /* Untick the menu item in the System and context menus. */
-    check_menu_item(IDM_FULLSCREEN, MF_UNCHECKED);
-}
-
-/*
- * Toggle full-screen mode.
- */
-static void flip_full_screen()
-{
-    if (is_full_screen()) {
-        ShowWindow(frame_hwnd, SW_RESTORE);
-    } else if (IsZoomed(frame_hwnd)) {
-        make_full_screen();
-    } else {
-        SendMessage(frame_hwnd, WM_FULLSCR_ON_MAX, 0, 0);
-        ShowWindow(frame_hwnd, SW_MAXIMIZE);
-    }
-}
-
 static size_t win_seat_output(Seat *seat, SeatOutputType type,
                               const void *data, size_t len)
 {
     WinGuiSession *wgs = container_of(seat, WinGuiSession, seat);
     if (len > 0) {
-        if (wgs == wgs_active) {
+        if (wgs == pane_get_active_session(wgs->pane)) {
             if (wgs->term->curs.y < wgs->term->disptop+wgs->term->rows) {
                 wgs->find.data_arrived = true;
             }
         } else {
-        tab_bar_set_tab_notified(&tabbar, wgs->tab_index);
-    }
+            pane_set_session_notified(wgs->pane, wgs->tab_index);
+        }
     }
     return term_data(wgs->term, data, len);
 }
@@ -6235,8 +5125,9 @@ static bool win_seat_get_cursor_position(Seat *seat, int *x, int *y)
 
 static bool win_seat_get_window_pixel_size(Seat *seat, int *x, int *y)
 {
+    WinGuiSession *wgs = container_of(seat, WinGuiSession, seat);
     RECT r;
-    GetWindowRect(frame_hwnd, &r);
+    GetWindowRect(pane_get_term_hwnd(wgs->pane), &r);
     *x = r.right - r.left;
     *y = r.bottom - r.top;
     return true;
