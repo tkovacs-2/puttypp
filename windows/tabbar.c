@@ -556,9 +556,9 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
             }
             POINT p = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             {
-                RECT r;
-                GetWindowRect(_hSelf, &r);
-                SendMessage(GetParent(_hSelf), WM_NCMOUSEMOVE, (WPARAM)HTCLIENT, MAKELPARAM(r.left+p.x, r.top+p.y));
+                POINT frame_p = p;
+                MapWindowPoints(_hSelf, frame_hwnd, &frame_p, 1);
+                SendMessage(frame_hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(frame_p.x, frame_p.y));
             }
 
             if (_isDragging)
@@ -718,13 +718,28 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
             return TRUE;
         }
 
+        case WM_NCMOUSEMOVE:
+        {
+            POINT p = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            ScreenToClient(frame_hwnd, &p);
+            SendMessage(frame_hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(p.x, p.y));
+            break;
+        }
+        case WM_NCLBUTTONDOWN:
+        case WM_NCRBUTTONDOWN:
+        {
+            NMHDR hdr;
+            hdr.hwndFrom = _hSelf;
+            hdr.code = NM_CLICK;
+            hdr.idFrom = TAB_BAR_NOTIFY_ID;
+            SendMessage(GetParent(_hSelf), WM_NOTIFY, 0, (LPARAM)(&hdr));
+            break;
+        }
         case WM_NCHITTEST:
         {
-            // Windows sends WM_MOUSEMOVE only in the strict tab zone.
-            // Around that we can only catch WM_NCHITTEST.
             LRESULT result = CallWindowProc(_tabBarDefaultProc, hwnd, Message, wParam, lParam);
             if (result == HTTRANSPARENT) {
-                SendMessage(GetParent(_hSelf), WM_NCMOUSEMOVE, (WPARAM)HTCLIENT, lParam);
+                result = HTBORDER;
             }
             return result;
         }
