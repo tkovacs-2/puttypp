@@ -327,9 +327,19 @@ static void realize_palette(WinGuiSession *wgs) {
 }
 
 static void activate_session(WinGuiSession *wgs) {
+    if (wgs_active->term->has_focus) {
+        term_set_focus(wgs_active->term, false);
+    }
     tab_bar_clear_tab_notified(wgs->tab_index);
     tab_bar_select_tab(wgs->tab_index);
     wgs_active = wgs;
+    if (!wgs->term->has_focus && GetForegroundWindow() == frame_hwnd) {
+        term_set_focus(wgs->term, true);
+        DestroyCaret();
+        wgs->caret_x = wgs->caret_y = -1;
+        CreateCaret(wgs->term_hwnd, wgs->caretbm, wgs->font_width, wgs->font_height);
+        ShowCaret(wgs->term_hwnd);
+    }
     wgs->find.update_finddlg_pending = true;
     realize_palette(wgs);
     int resize_action = conf_get_int(wgs->conf, CONF_resize_action);
@@ -378,6 +388,9 @@ static void activate_session(WinGuiSession *wgs) {
             wm_size_resize_term(wgs, MAKELPARAM(r.right-r.left, r.bottom-r.top));
             reset_window(wgs, 1);
         }
+    }
+    if (wgs->caret_x < 0 || wgs->caret_y < 0) {
+        win_set_cursor_pos(&wgs->termwin, wgs->term->curs.x, wgs->term->curs.y);
     }
     set_frame_style(wgs->conf);
     set_title_from_session(wgs);
