@@ -1,0 +1,71 @@
+
+CC = $(TOOLPATH)gcc
+RC = $(TOOLPATH)windres
+
+OBJDIR := obj
+PUTTY := putty-0.85
+
+CFLAGS = -Wall -O2 -std=gnu99 -Wvla -D_WINDOWS -DWIN32S_COMPAT -g \
+		-D_NO_OLDNAMES -D__USE_MINGW_ANSI_STDIO=1 \
+		-DHAVE_STRTOUMAX=1 \
+		-DHAVE_ADDDLLDIRECTORY=1 \
+		-DHAVE_AFUNIX_H=1 \
+		-DHAVE_SETDEFAULTDLLDIRECTORIES=1 \
+		-DHAVE_GCP_RESULTSW=1 \
+		-I../../$(PUTTY)/windows/ \
+		-I../ \
+
+LDFLAGS = --static
+RCFLAGS = $(RCINC) --define WIN32=1 --define _WIN32=1 --define WINVER=0x0400 \
+		-DHAVE_WINRESRC_H=1 \
+		-I../../$(PUTTY)/windows/ \
+		-I$(OBJDIR)/ \
+		-I../
+
+CFLAGS += -D_WIN32_IE=0x0500
+CFLAGS += -DWINVER=0x0500 -D_WIN32_WINDOWS=0x0410 -D_WIN32_WINNT=0x0500
+
+.SUFFIXES:
+
+SOURCES := ../pastedlg.c \
+            ../pointerarray.c \
+            ../tabbar.c \
+            ../tabdrag.c \
+            ../anchor.c \
+            ../finddlg.c \
+            ../pane.c \
+            ../panesizetip.c \
+            ../split.c \
+            ../splitmarker.c \
+			stubterminal.c \
+			stubdialog.c \
+            guitest.c
+
+RESOURCE := guitest.rc
+
+getobjdir = $(patsubst %,$(OBJDIR)/%.$(2),$(subst /,__,$(subst $(PUTTY)/,,$(subst ../,,$(basename $(1))))))
+
+$(OBJDIR):
+	mkdir -p $(OBJDIR)
+
+OBJECTS := $(call getobjdir,$(SOURCES),o)
+DFILES := $(call getobjdir,$(SOURCES),d)
+
+-include $(DFILES)
+
+$(foreach SOURCE,$(SOURCES),$(eval $(call getobjdir,$(SOURCE),o): SOURCE := $(SOURCE)))
+$(OBJECTS): | $(OBJDIR)
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -MMD -MF $(@:.o=.d) -c $(SOURCE) -o $@
+
+-include $(OBJDIR)/guitest.res.d
+
+$(OBJDIR)/guitest.res.o: $(RESOURCE) $(wildcard ../icons/*) | $(OBJDIR)
+	$(RC) $(RCFL) $(RCFLAGS) --preprocessor-arg -MMD --preprocessor-arg -MF$(@:.o=.d) --preprocessor-arg -MT$@ --preprocessor-arg -DRC_INVOKED --preprocessor-arg -xc-header $(RESOURCE) -o $@
+
+guitest.exe: $(OBJECTS) $(OBJDIR)/guitest.res.o
+	$(CC) $(LDFLAGS) -o $@ -Wl,-Map,$(OBJDIR)/guitest.map $^ -lgdi32 -lcomctl32 -luser32 -lshcore -lmsimg32
+
+clean:
+	rm -rf $(OBJDIR) *.exe
+
+FORCE:
