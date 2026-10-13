@@ -1,0 +1,9 @@
+#include "rcstuff.h"
+
+#include "tabbar_res.rc2"
+#include "pastedlg_res.rc2"
+#include "confdlg_res.rc2"
+
+#ifndef NO_MANIFESTS
+1 RT_MANIFEST "putty.mft"
+#endif /* NO_MANIFESTS */
