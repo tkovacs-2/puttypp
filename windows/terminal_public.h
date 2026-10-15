@@ -5,5 +5,6 @@
 termline *term_lineptr(Terminal *term, int y);
 void term_unlineptr(termline *line);
 int term_sblines(Terminal *term);
+void term_update_sbar(Terminal *term);
 
 #endif

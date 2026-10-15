@@ -15,7 +15,7 @@
 
 #include "putty.h"
 #include "ssh.h"
-#include "terminal.h"
+#include "terminal_public.h"
 #include "storage.h"
 #include "putty-rc.h"
 #include "security-api.h"

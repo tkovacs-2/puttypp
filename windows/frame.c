@@ -185,23 +185,6 @@ static void set_icon_title_from_session(WinGuiSession *wgs) {
         SetWindowTextW(frame_hwnd, wgs->icon_name);
 }
 
-/* Calling of wintw_set_scrollbar() is connected to drawing in term_update() in terminal.c
-   This means if scroll info has changed till session is not active we don't get the
-   about the new status.
-   At activation we need to calculate it based on the Terminal data, but the
-   update_sbar() function doing this is static.
-   As a workaround the original handling is copied here. */
-static void update_sbar(Terminal *term) {
-    term->win_scrollbar_update_pending = false;
-    int sblines = count234(term->scrollback);
-    if (term->erase_to_scrollback &&
-        term->alt_which && term->alt_screen) {
-            sblines += term->alt_sblines;
-    }
-    wintw_set_scrollbar(term->win, sblines + term->rows,
-                        sblines + term->disptop, term->rows);
-}
-
 static void set_scrollbar(int total, int start, int page, bool redraw) {
     SCROLLINFO si;
     si.cbSize = sizeof(si);
@@ -378,7 +361,7 @@ static void activate_session(WinGuiSession *wgs) {
     set_frame_style(wgs->conf);
     set_title_from_session(wgs);
     set_icon_title_from_session(wgs);
-    update_sbar(wgs->term);
+    term_update_sbar(wgs->term);
     update_mouse_pointer(wgs);
     reseteventlog(&wgs->eventlogstuff);
     update_finddlg(wgs);
