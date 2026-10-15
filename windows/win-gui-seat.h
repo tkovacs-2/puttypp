@@ -148,7 +148,6 @@ struct WinGuiSession {
       int font_width;
       int font_height;
     } resize_either;
-    bool term_palette_init;
     int font_dpi;
     struct {
       wchar_t *pattern;

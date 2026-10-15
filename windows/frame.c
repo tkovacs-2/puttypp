@@ -82,20 +82,6 @@ static bool create_conf(const char *saved_session, Conf **conf, const char **ses
     return true;
 }
 
-static void term_palette_init_fix_callback(void *ctx)
-{
-    Terminal *term = (Terminal *)ctx;
-    win_palette_set(term->win, 0, 0, term->palette);
-}
-
-static void term_palette_init_fix(Terminal *term)
-{
-    if (!term->win_palette_pending)
-    {
-        queue_toplevel_callback(term_palette_init_fix_callback, term);
-    }
-}
-
 static WinGuiSession *create_frontend(Conf *conf, const char *session_name) {
     WinGuiSession *wgs = (WinGuiSession *)smalloc(sizeof(WinGuiSession));
 
@@ -138,12 +124,9 @@ static WinGuiSession *create_frontend(Conf *conf, const char *session_name) {
     init_fonts(wgs, 0,0);
     init_palette(wgs);
 
-    wgs->term_palette_init = true;
     Terminal *term = term_init(conf, &wgs->ucsdata, &wgs->termwin);
-    term->ldisc = NULL; // missing from term_init
     term->basic_erase_char.attr |= ATTR_ERASE;
     term->erase_char.attr |= ATTR_ERASE;
-    term_palette_init_fix(term);
     wgs->term = term;
     setup_clipboards(term, conf);
     wgs->logctx = log_init(&wgs->logpolicy, conf);

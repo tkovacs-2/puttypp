@@ -5162,13 +5162,6 @@ static void wintw_palette_set(TermWin *tw, unsigned start,
     assert(start <= OSC4_NCOLOURS);
     assert(ncolours <= OSC4_NCOLOURS - start);
 
-    if (wgs->term_palette_init)
-    {
-        colours_in -= start;
-        start = 0;
-        ncolours = OSC4_NCOLOURS;
-        wgs->term_palette_init = false;
-    }
     for (unsigned i = 0; i < ncolours; i++) {
         const rgb *in = &colours_in[i];
         PALETTEENTRY *out = &wgs->logpal->palPalEntry[i + start];
