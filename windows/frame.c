@@ -254,39 +254,8 @@ static bool set_frame_style(Conf *conf) {
 }
 
 static void realize_palette(WinGuiSession *wgs) {
-    Conf *conf = wgs->conf;
-    bool got_new_palette = false;
-
-    if (!wgs->tried_pal && conf_get_bool(conf, CONF_try_palette)) {
-        HDC hdc = GetDC(wgs->term_hwnd);
-        if (GetDeviceCaps(hdc, RASTERCAPS) & RC_PALETTE) {
-            wgs->pal = CreatePalette(wgs->logpal);
-            if (wgs->pal) {
-                SelectPalette(hdc, wgs->pal, false);
-                RealizePalette(hdc);
-                SelectPalette(hdc, GetStockObject(DEFAULT_PALETTE), false);
-
-                /* Convert all RGB() values in colours[] into PALETTERGB(),
-                 * and ensure we stick to that later */
-                wgs->colorref_modifier = PALETTERGB(0, 0, 0) ^ RGB(0, 0, 0);
-                for (unsigned i = 0; i < OSC4_NCOLOURS; i++)
-                    wgs->colours[i] ^= wgs->colorref_modifier;
-
-                /* Inhibit the SetPaletteEntries call below */
-                got_new_palette = true;
-            }
-        }
-        ReleaseDC(wgs->term_hwnd, hdc);
-        wgs->tried_pal = true;
-    }
-
-    if (wgs->pal && !got_new_palette) {
-        /* We already had a palette, so replace the changed colours in the
-         * existing one. */
-        SetPaletteEntries(wgs->pal, 0, wgs->logpal->palNumEntries, wgs->logpal->palPalEntry);
-
+    if (wgs->pal) {
         HDC hdc = make_hdc(wgs);
-        UnrealizeObject(wgs->pal);
         RealizePalette(hdc);
         free_hdc(wgs, hdc);
     }
