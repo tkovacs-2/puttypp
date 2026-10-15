@@ -2528,7 +2528,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
             /* Pass new config data to the logging module */
             log_reconfig(wgs->logctx, wgs->conf);
 
-            sfree(wgs->logpal);
             /*
              * Flush the line discipline's edit buffer in the
              * case where local editing has just been disabled.
@@ -2538,21 +2537,24 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
               ldisc_echoedit_update(wgs->ldisc);
             }
 
+            bool try_palette_changed = conf_get_bool(wgs->conf, CONF_try_palette) !=
+                                       conf_get_bool(prev_conf, CONF_try_palette);
             if (conf_get_bool(wgs->conf, CONF_system_colour) !=
-                conf_get_bool(prev_conf, CONF_system_colour))
+                conf_get_bool(prev_conf, CONF_system_colour) || try_palette_changed) {
+                if (wgs->pal && try_palette_changed) {
+                    DeleteObject(wgs->pal);
+                    wgs->pal = NULL;
+                    wgs->tried_pal = false;
+                    for (unsigned i = 0; i < OSC4_NCOLOURS; i++)
+                        wgs->colours[i] ^= wgs->colorref_modifier;
+                    wgs->colorref_modifier = 0;
+                }
                 term_notify_palette_changed(wgs->term);
+            }
 
             /* Pass new config data to the terminal */
             term_reconfig(wgs->term, wgs->conf);
             setup_clipboards(wgs->term, wgs->conf);
-
-            /* Reinitialise the colour palette, in case the terminal
-             * just read new settings out of Conf */
-            if (wgs->pal)
-                DeleteObject(wgs->pal);
-            wgs->logpal = NULL;
-            wgs->pal = NULL;
-            init_palette(wgs);
 
             /* Pass new config data to the back end */
             if (wgs->backend)
@@ -3597,7 +3599,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT message,
         if (conf_get_bool(wgs->conf, CONF_system_colour)) {
             /* Refresh palette from system colours. */
             term_notify_palette_changed(wgs->term);
-            init_palette(wgs);
             /* Force a repaint of the terminal window. */
             term_invalidate(wgs->term);
         }
@@ -5151,8 +5152,13 @@ static void init_palette(WinGuiSession *wgs)
         LOGPALETTE, (OSC4_NCOLOURS - 1) * sizeof(PALETTEENTRY));
     wgs->logpal->palVersion = 0x300;
     wgs->logpal->palNumEntries = OSC4_NCOLOURS;
-    for (unsigned i = 0; i < OSC4_NCOLOURS; i++)
-        wgs->logpal->palPalEntry[i].peFlags = PC_NOCOLLAPSE;
+    for (unsigned i = 0; i < OSC4_NCOLOURS; i++) {
+        PALETTEENTRY *out = &wgs->logpal->palPalEntry[i];
+        out->peFlags = PC_NOCOLLAPSE;
+        out->peRed = 0;
+        out->peGreen = 0;
+        out->peBlue = 0;
+    }
 }
 
 static void wintw_palette_set(TermWin *tw, unsigned start,
@@ -5172,8 +5178,48 @@ static void wintw_palette_set(TermWin *tw, unsigned start,
             RGB(in->r, in->g, in->b) ^ wgs->colorref_modifier;
     }
 
-    if (wgs != wgs_active) {return;}
-    realize_palette(wgs);
+    bool got_new_palette = false;
+    bool is_active = (wgs == wgs_active);
+
+    if (!wgs->tried_pal && conf_get_bool(wgs->conf, CONF_try_palette)) {
+        HDC hdc = GetDC(wgs->term_hwnd);
+        if (GetDeviceCaps(hdc, RASTERCAPS) & RC_PALETTE) {
+            wgs->pal = CreatePalette(wgs->logpal);
+            if (wgs->pal) {
+                if (is_active) {
+                    SelectPalette(hdc, wgs->pal, false);
+                    RealizePalette(hdc);
+                    SelectPalette(hdc, GetStockObject(DEFAULT_PALETTE), false);
+                }
+
+                /* Convert all RGB() values in colours[] into PALETTERGB(),
+                 * and ensure we stick to that later */
+                wgs->colorref_modifier = PALETTERGB(0, 0, 0) ^ RGB(0, 0, 0);
+                for (unsigned i = 0; i < OSC4_NCOLOURS; i++)
+                    wgs->colours[i] ^= wgs->colorref_modifier;
+
+                /* Inhibit the SetPaletteEntries call below */
+                got_new_palette = true;
+            }
+        }
+        ReleaseDC(wgs->term_hwnd, hdc);
+        wgs->tried_pal = true;
+    }
+
+    if (wgs->pal && !got_new_palette) {
+        /* We already had a palette, so replace the changed colours in the
+         * existing one. */
+        SetPaletteEntries(wgs->pal, 0, wgs->logpal->palNumEntries, wgs->logpal->palPalEntry);
+
+        if (is_active) {
+            HDC hdc = make_hdc(wgs);
+            UnrealizeObject(wgs->pal);
+            RealizePalette(hdc);
+            free_hdc(wgs, hdc);
+        }
+    }
+
+    if (!is_active) {return;}
 
     if (start <= OSC4_COLOUR_bg && OSC4_COLOUR_bg < start + ncolours) {
         /* If Default Background changes, we need to ensure any space between
