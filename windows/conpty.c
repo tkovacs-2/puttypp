@@ -30,6 +30,11 @@ DECL_WINDOWS_FUNCTION(static, HRESULT, CreatePseudoConsole,
 DECL_WINDOWS_FUNCTION(static, void, ClosePseudoConsole, (HPCON));
 DECL_WINDOWS_FUNCTION(static, HRESULT, ResizePseudoConsole, (HPCON, COORD));
 
+DECL_WINDOWS_FUNCTION(static, WINBOOL, InitializeProcThreadAttributeList,
+                      (LPPROC_THREAD_ATTRIBUTE_LIST, DWORD, DWORD, PSIZE_T));
+DECL_WINDOWS_FUNCTION(static, WINBOOL, UpdateProcThreadAttribute,
+                     (LPPROC_THREAD_ATTRIBUTE_LIST, DWORD, DWORD_PTR, PVOID, SIZE_T, PVOID, PSIZE_T));
+
 static bool init_conpty_api(void)
 {
     static bool tried = false;
@@ -39,11 +44,15 @@ static bool init_conpty_api(void)
         GET_WINDOWS_FUNCTION(kernel32_module, CreatePseudoConsole);
         GET_WINDOWS_FUNCTION(kernel32_module, ClosePseudoConsole);
         GET_WINDOWS_FUNCTION(kernel32_module, ResizePseudoConsole);
+        GET_WINDOWS_FUNCTION(kernel32_module, InitializeProcThreadAttributeList);
+        GET_WINDOWS_FUNCTION(kernel32_module, UpdateProcThreadAttribute);
     }
 
     return (p_CreatePseudoConsole != NULL &&
             p_ClosePseudoConsole != NULL &&
-            p_ResizePseudoConsole != NULL);
+            p_ResizePseudoConsole != NULL &&
+            p_InitializeProcThreadAttributeList != NULL &&
+            p_UpdateProcThreadAttribute != NULL);
 }
 
 static void conpty_terminate(ConPTY *conpty)
@@ -218,15 +227,15 @@ static char *conpty_init(const BackendVtable *vt, Seat *seat,
     si.StartupInfo.cb = sizeof(si);
 
     SIZE_T attrsize = 0;
-    InitializeProcThreadAttributeList(NULL, 1, 0, &attrsize);
+    p_InitializeProcThreadAttributeList(NULL, 1, 0, &attrsize);
     si.lpAttributeList = smalloc(attrsize);
-    if (!InitializeProcThreadAttributeList(
+    if (!p_InitializeProcThreadAttributeList(
             si.lpAttributeList, 1, 0, &attrsize)) {
         err = dupprintf("InitializeProcThreadAttributeList: %s",
                         win_strerror(GetLastError()));
         goto out;
     }
-    if (!UpdateProcThreadAttribute(
+    if (!p_UpdateProcThreadAttribute(
             si.lpAttributeList,
             0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
             pcon, sizeof(pcon), NULL, NULL)) {
