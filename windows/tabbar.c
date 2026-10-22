@@ -351,6 +351,21 @@ static void TabBarPlus_endDragImage(void)
     _dragImageList = NULL;
 }
 
+static HBITMAP TabBarPlus_createDragBitmap(HDC hdc, int width, int height)
+{
+    BITMAPINFO bmi;
+    ZeroMemory(&bmi, sizeof(bmi));
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = width;
+    bmi.bmiHeader.biHeight = -height;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 24;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    void *bits;
+    return CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &bits, NULL, 0);
+}
+
 static void TabBarPlus_beginDragImage(HWND _hSelf, int nTab, const POINT *point)
 {
     if (_dragImageList) {
@@ -363,7 +378,7 @@ static void TabBarPlus_beginDragImage(HWND _hSelf, int nTab, const POINT *point)
     int height = rect.bottom - rect.top;
     HDC hdc = GetDC(_hSelf);
     HDC hdcMemory = CreateCompatibleDC(hdc);
-    HBITMAP hBitmap = CreateCompatibleBitmap(hdc, width, height);
+    HBITMAP hBitmap = TabBarPlus_createDragBitmap(hdc, width, height);
     HGDIOBJ oldBitmap = SelectObject(hdcMemory, hBitmap);
     RECT drawRect = { 0, 0, width, height };
     TabBarPlus_drawItem(hdcMemory, &drawRect, _hSelf, nTab, false);
@@ -565,13 +580,13 @@ static LRESULT TabBarPlus_runProc(HWND hwnd, UINT Message, WPARAM wParam, LPARAM
             {
                 if (TabBarPlus_isPointOutside(hwnd, &p))
                 {
+                    TabBarPlus_notify(hwnd, TCN_OUTSIDE_DRAG, _nTabDragged, &p);
                     if (!_isDraggingOutside) {
                         TabBarPlus_setDragCursor(true);
                         TabBarPlus_beginDragImage(_hSelf, _nTabDragged, &p);
                     } else {
                         TabBarPlus_moveDragImage(hwnd, &p);
                     }
-                    TabBarPlus_notify(hwnd, TCN_OUTSIDE_DRAG, _nTabDragged, &p);
                     _isDraggingOutside = true;
                 }
                 else
