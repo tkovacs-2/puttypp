@@ -37,9 +37,14 @@ SOURCES := ../pastedlg.c \
             ../panesizetip.c \
             ../split.c \
             ../splitmarker.c \
-			stubterminal.c \
-			stubdialog.c \
+
+COMMON_SOURCES := stubterminal.c
+
+GUI_SOURCES := stubdialog.c \
             guitest.c
+
+TEST_SOURCES := stubapi.c \
+            main.c
 
 RESOURCE := guitest.rc
 
@@ -49,21 +54,33 @@ $(OBJDIR):
 	mkdir -p $(OBJDIR)
 
 OBJECTS := $(call getobjdir,$(SOURCES),o)
-DFILES := $(call getobjdir,$(SOURCES),d)
+IMP_OBJECTS := $(call getobjdir,$(SOURCES),imp.o)
+COMMON_OBJECTS := $(call getobjdir,$(COMMON_SOURCES),o)
+GUI_OBJECTS := $(call getobjdir,$(GUI_SOURCES),o)
+TEST_OBJECTS := $(call getobjdir,$(TEST_SOURCES),o)
 
--include $(DFILES)
+DFILES := $(call getobjdir,$(SOURCES) $(COMMON_SOURCES) $(GUI_SOURCES) $(TEST_SOURCES),d)
 
-$(foreach SOURCE,$(SOURCES),$(eval $(call getobjdir,$(SOURCE),o): SOURCE := $(SOURCE)))
-$(OBJECTS): | $(OBJDIR)
+-include $(DFILES) $(IMP_OBJECTS:.o=.d)
+
+$(foreach SOURCE,$(SOURCES) $(COMMON_SOURCES) $(GUI_SOURCES) $(TEST_SOURCES),$(eval $(call getobjdir,$(SOURCE),o): SOURCE := $(SOURCE)))
+$(OBJECTS) $(COMMON_OBJECTS) $(GUI_OBJECTS) $(TEST_OBJECTS): | $(OBJDIR)
 	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -MMD -MF $(@:.o=.d) -c $(SOURCE) -o $@
+
+$(foreach SOURCE,$(SOURCES),$(eval $(call getobjdir,$(SOURCE),imp.o): SOURCE := $(SOURCE)))
+$(IMP_OBJECTS): | $(OBJDIR)
+	$(CC) $(COMPAT) $(CFLAGS) $(XFLAGS) -DDECLSPEC_IMPORT='__declspec()' -MMD -MF $(@:.o=.d) -c $(SOURCE) -o $@
 
 -include $(OBJDIR)/guitest.res.d
 
 $(OBJDIR)/guitest.res.o: $(RESOURCE) $(wildcard ../icons/*) | $(OBJDIR)
 	$(RC) $(RCFL) $(RCFLAGS) --preprocessor-arg -MMD --preprocessor-arg -MF$(@:.o=.d) --preprocessor-arg -MT$@ --preprocessor-arg -DRC_INVOKED --preprocessor-arg -xc-header $(RESOURCE) -o $@
 
-guitest.exe: $(OBJECTS) $(OBJDIR)/guitest.res.o
+guitest.exe: $(OBJECTS) $(COMMON_OBJECTS) $(GUI_OBJECTS) $(OBJDIR)/guitest.res.o
 	$(CC) $(LDFLAGS) -o $@ -Wl,-Map,$(OBJDIR)/guitest.map $^ -lgdi32 -lcomctl32 -luser32 -lshcore -lmsimg32
+
+frametest.exe: $(IMP_OBJECTS) $(COMMON_OBJECTS) $(TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
 
 clean:
 	rm -rf $(OBJDIR) *.exe
