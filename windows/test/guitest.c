@@ -82,7 +82,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
     pane_set_session_unusable(pane, 2, true);
     set_term_hwnd_style(pane, pane_get_session(pane, 0));
     pane_select_session(pane, 0);
-    realize_palette(pane_get_active_session(pane));
     snap_frame_to_term(pane);
 
     popup_menus[0].menu = CreatePopupMenu();

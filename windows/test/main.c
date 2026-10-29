@@ -70,7 +70,6 @@ int main() {
     add_initial_session(pane, "resize_term", 0);
     set_term_hwnd_style(pane, pane_get_session(pane, 0));
     pane_select_session(pane, 0);
-    realize_palette(pane_get_active_session(pane));
     snap_frame_to_term(pane);
 
     ShowWindow(frame_hwnd, SW_SHOW);

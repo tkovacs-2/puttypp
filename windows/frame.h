@@ -8,7 +8,6 @@ static void destroy_session(WinGuiSession *wgs);
 
 static void set_title_from_session(WinGuiSession *wgs);
 static void set_icon_title_from_session(WinGuiSession *wgs);
-static void realize_palette(WinGuiSession *wgs);
 
 static void activate_session(Pane *pane, int index);
 static char *create_session_title(int id, const char *session_name);

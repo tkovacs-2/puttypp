@@ -736,6 +736,8 @@ static LRESULT CALLBACK frame_proc(HWND hwnd, UINT message, WPARAM wparam, LPARA
         set_input_locale((HKL)lparam);
         sys_cursor_update(pane_get_active_session(focused_pane));
         break;
+      case WM_QUERYNEWPALETTE:
+        return false;
       case WM_PALETTECHANGED:
       case WM_SYSCOLORCHANGE:
         message_term_hwnds(root_split, message, wparam, lparam);
@@ -1573,6 +1575,7 @@ static void handle_term_hwnd_setfocus(WinGuiSession *wgs) {
     ShowCaret(wgs->term_hwnd);
     win_set_cursor_pos(&wgs->termwin, wgs->term->curs.x, wgs->term->curs.y);
     term_update(wgs->term);
+    SendMessage(wgs->term_hwnd, WM_QUERYNEWPALETTE, 0, 0);
 }
 
 static void handle_term_hwnd_killfocus(Pane *pane) {
