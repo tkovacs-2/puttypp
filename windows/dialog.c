@@ -968,7 +968,6 @@ bool do_reconfig_pp(HWND parent, Conf *conf, const char **session_name, int prot
     setup_config_box(pds->ctrlbox, true, protocol, protcfginfo);
     win_setup_config_box(pds->ctrlbox, &pds->dp->hwnd, has_help(),
                          true, protocol);
-    add_conpty_config_panel(pds->ctrlbox);
 
     pds->dp->wintitle = dupprintf("%s Reconfiguration", appname);
     pds->dp->data = conf;
