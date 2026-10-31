@@ -172,6 +172,8 @@ static void destroy_frontend(WinGuiSession *wgs) {
     conf_free(wgs->conf);
 
     sfree((char *)wgs->session_name);
+    sfree((char *)wgs->window_name);
+    sfree((char *)wgs->icon_name);
     sfree(wgs);
 }
 
