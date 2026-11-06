@@ -10,7 +10,10 @@ typedef struct StubMenu {
 } StubMenu;
 
 WINUSERAPI HMENU WINAPI CreatePopupMenu(void) {
-    StubMenu *m = calloc(1, sizeof(*m));
+    StubMenu *m = malloc(sizeof(*m));
+    m->item_count = 0;
+    m->item_capacity = 0;
+    m->items = NULL;
     return (HMENU)m;
 }
 

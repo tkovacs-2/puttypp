@@ -21,6 +21,8 @@
 #include <wchar.h>
 #include <assert.h>
 
+static int message_box_result = IDOK;
+
 static LRESULT CALLBACK tab_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 
 WINUSERAPI BOOL WINAPI PostMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -40,7 +42,8 @@ typedef struct StubHdwp {
 } StubHdwp;
 
 WINUSERAPI HDWP WINAPI BeginDeferWindowPos(int count) {
-    StubHdwp *h = calloc(1, sizeof(*h));
+    StubHdwp *h = malloc(sizeof(*h));
+    h->count = 0;
     h->capacity = count > 0 ? count : 8;
     return (HDWP)h;
 }
@@ -155,22 +158,12 @@ WINUSERAPI BOOL WINAPI IsDialogMessageW(HWND dlg, LPMSG msg) {
     return FALSE;
 }
 
-WINUSERAPI INT_PTR WINAPI DialogBoxParam(HINSTANCE inst, LPCSTR tmpl, HWND parent,
-    DLGPROC proc, LPARAM param) {
-    (void)inst;
-    (void)tmpl;
-    (void)parent;
-    (void)proc;
-    (void)param;
-    return IDCANCEL;
+WINUSERAPI INT_PTR WINAPI DialogBoxParam(HINSTANCE inst, LPCSTR tmpl, HWND parent, DLGPROC proc, LPARAM param) {
+    return proc(NULL, 0, 0, param);
 }
 
-WINUSERAPI int WINAPI MessageBox(HWND hwnd, LPCSTR text, LPCSTR caption, UINT type) {
-    (void)hwnd; (void)text; (void)caption;
-    if (type & MB_OKCANCEL) {
-        return IDOK;
-    }
-    return IDOK;
+WINUSERAPI int WINAPI MessageBox(HWND, LPCSTR, LPCSTR, UINT) {
+    return message_box_result;
 }
 
 WINUSERAPI BOOL WINAPI InitCommonControlsEx(const INITCOMMONCONTROLSEX *) {
@@ -309,6 +302,10 @@ WINUSERAPI BOOL WINAPI OffsetRect(RECT *r, int dx, int dy) {
     r->top += dy;
     r->bottom += dy;
     return TRUE;
+}
+
+void stubwinapi_set_message_box_result(int result) {
+    message_box_result = result;
 }
 
 #include "stubapi_wnd.c"

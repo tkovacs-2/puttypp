@@ -103,6 +103,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
+
+    tab_bar_common_uninit();
+    DeleteObject(menu_font);
+
     return 0;
 }
 

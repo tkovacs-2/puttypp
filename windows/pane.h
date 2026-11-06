@@ -32,6 +32,7 @@ int pane_get_scrollbar_track_pos(Pane *pane);
 WinGuiSession *pane_get_active_session(Pane *pane);
 WinGuiSession *pane_get_session(Pane *pane, int index);
 void pane_clear_active_session(Pane *pane);
+void pane_restore_active_session(Pane *pane);
 
 Pane *pane_get_from_tab_bar_hwnd(HWND hwnd);
 Pane *pane_get_from_term_hwnd(HWND hwnd);

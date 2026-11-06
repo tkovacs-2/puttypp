@@ -95,7 +95,8 @@ static void unlink_child(StubWindow *child) {
 }
 
 static StubWindow *alloc_window(void) {
-    StubWindow *w = calloc(1, sizeof(*w));
+    StubWindow *w = malloc(sizeof(StubWindow));
+    memset(w, 0, sizeof(*w));
     w->enabled = true;
     w->tab_cur_sel = -1;
     w->tab_item_extra = sizeof(TCITEMHEADER);
@@ -116,10 +117,13 @@ static const WNDCLASSW *find_class(LPCWSTR name) {
 static void adjust_client_from_window(StubWindow *w) {
     int border = (w->style & (WS_BORDER | WS_THICKFRAME) ? 5 : 0);
     int caption = (w->style & WS_CAPTION) ? 30 : 0;
-    w->client_rect.left = w->rect.left + border;
-    w->client_rect.top = w->rect.top + caption + border;
-    w->client_rect.right = w->rect.right - border;
-    w->client_rect.bottom = w->rect.bottom - border;
+    int vscroll = (w->style & WS_VSCROLL) ? 10 : 0;
+    int hscroll = (w->style & WS_HSCROLL) ? 10 : 0;
+    int edge = (w->exstyle & WS_EX_CLIENTEDGE) ? 2 : 0;
+    w->client_rect.left = w->rect.left + border + edge;
+    w->client_rect.top = w->rect.top + caption + border + edge;
+    w->client_rect.right = w->rect.right - border - vscroll - edge;
+    w->client_rect.bottom = w->rect.bottom - border - hscroll - edge;
     if (w->client_rect.right < w->client_rect.left) {
         w->client_rect.right = w->client_rect.left;
     }
@@ -209,25 +213,26 @@ static void send_child_windowposchanged(StubWindow *w) {
     w->defer_winposchanged = false;
 }
 
-static void set_window_pos(StubWindow *wnd, WINDOWPOS *pos) {
-    bool move = !(pos->flags & SWP_NOMOVE);
-    bool size = !(pos->flags & SWP_NOSIZE);
-    bool show = (pos->flags & SWP_SHOWWINDOW);
-    bool hide = (pos->flags & SWP_HIDEWINDOW);
-    bool activate = !(pos->flags & SWP_NOACTIVATE);
-    int x = pos->x;
-    int y = pos->y;
-    int w = pos->cx;
-    int h = pos->cy;
+static void set_window_pos(StubWindow *wnd, WINDOWPOS *winpos) {
+    WINDOWPOS pos = *winpos;
+    bool move = !(pos.flags & SWP_NOMOVE);
+    bool size = !(pos.flags & SWP_NOSIZE);
+    bool show = (pos.flags & SWP_SHOWWINDOW);
+    bool hide = (pos.flags & SWP_HIDEWINDOW);
+    bool activate = !(pos.flags & SWP_NOACTIVATE);
+    int x = pos.x;
+    int y = pos.y;
+    int w = pos.cx;
+    int h = pos.cy;
     if (move && wnd->rect.left == x && wnd->rect.top == y) {
         if (!wnd->defer_winposchanged) {
-            pos->flags |= SWP_NOMOVE;
+            pos.flags |= SWP_NOMOVE;
             move = false;
         }
     }
     if (size && wnd->rect.right == x + w && wnd->rect.bottom == y + h) {
         if (!wnd->defer_winposchanged) {
-            pos->flags |= SWP_NOSIZE;
+            pos.flags |= SWP_NOSIZE;
             size = false;
         }
     }
@@ -241,6 +246,10 @@ static void set_window_pos(StubWindow *wnd, WINDOWPOS *pos) {
             h = wnd->rect.bottom - wnd->rect.top;
         }
         set_window_rect(wnd, x, y, w, h);
+    } else if (pos.flags & SWP_FRAMECHANGED) {
+        adjust_client_from_window(wnd);
+        pos.flags &= ~SWP_NOSIZE;
+        size = true;
     }
     bool sent = false;
     if (show && !(wnd->style & WS_VISIBLE)) {
@@ -252,30 +261,30 @@ static void set_window_pos(StubWindow *wnd, WINDOWPOS *pos) {
                 }
             }
             if (wnd->defer_winposchanged) {
-                WINDOWPOS t = *pos;
-                t.x = wnd->rect.left;
-                t.y = wnd->rect.top;
-                t.cx = wnd->rect.right - wnd->rect.left;
-                t.cy = wnd->rect.bottom - wnd->rect.top;
-                t.flags &= ~(SWP_NOMOVE | SWP_NOSIZE);
-                send_message(wnd, WM_WINDOWPOSCHANGED, 0, (LPARAM)&t);
+
+                pos.x = wnd->rect.left;
+                pos.y = wnd->rect.top;
+                pos.cx = wnd->rect.right - wnd->rect.left;
+                pos.cy = wnd->rect.bottom - wnd->rect.top;
+                pos.flags &= ~SWP_NOSIZE;
+                send_message(wnd, WM_WINDOWPOSCHANGED, 0, (LPARAM)&pos);
                 wnd->defer_winposchanged = false;
             } else {
-                send_message(wnd, WM_WINDOWPOSCHANGED, 0, (LPARAM)pos);
+                send_message(wnd, WM_WINDOWPOSCHANGED, 0, (LPARAM)&pos);
             }
             InvalidateRect(hwnd_from_wnd(wnd), NULL, FALSE);
             sent = true;
         }
     } else if (hide && is_window_visible(wnd)) {
         set_window_visible(wnd, false);
-        send_message(wnd, WM_WINDOWPOSCHANGED, 0, (LPARAM)pos);
+        send_message(wnd, WM_WINDOWPOSCHANGED, 0, (LPARAM)&pos);
         sent = true;
     }
     if (activate) {
         set_active_window(wnd);
     }
     if (!sent && !wnd->defer_winposchanged && (size || move)) {
-        send_message(wnd, WM_WINDOWPOSCHANGED, 0, (LPARAM)pos);
+        send_message(wnd, WM_WINDOWPOSCHANGED, 0, (LPARAM)&pos);
     }
 }
 
@@ -713,7 +722,9 @@ WINUSERAPI HWND WINAPI SetFocus(HWND hwnd) {
         send_message(old, WM_KILLFOCUS, 0, 0);
     }
     focus_wnd = w;
-    send_message(w, WM_SETFOCUS, 0, 0);
+    if (w) {
+        send_message(w, WM_SETFOCUS, 0, 0);
+    }
     return hwnd_from_wnd(old);
 }
 

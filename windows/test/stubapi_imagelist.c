@@ -5,9 +5,10 @@ typedef struct StubImageList {
 } StubImageList;
 
 WINUSERAPI HIMAGELIST WINAPI ImageList_Create(int cx, int cy, UINT flags, int grow, int init) {
-    StubImageList *il = calloc(1, sizeof(*il));
+    StubImageList *il = malloc(sizeof(*il));
     il->cx = cx;
     il->cy = cy;
+    il->count = 0;
     return (HIMAGELIST)il;
 }
 

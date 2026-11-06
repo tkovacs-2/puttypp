@@ -17,9 +17,10 @@ typedef struct StubGdiObject {
 } StubGdiObject;
 
 static StubGdiObject *stub_create_gdi_object(StubGdiType type) {
-    StubGdiObject *o = calloc(1, sizeof(*o));
+    StubGdiObject *o = malloc(sizeof(*o));
     o->type = type;
     o->stock = false;
+    o->selected = 0;
     return o;
 }
 
@@ -42,12 +43,13 @@ typedef struct StubDc {
 } StubDc;
 
 static StubDc *stub_alloc_dc(HWND hwnd) {
-    StubDc *dc = calloc(1, sizeof(StubDc));
+    StubDc *dc = malloc(sizeof(StubDc));
     dc->hwnd = hwnd;
     dc->selected_font = &STUB_STOCK_SYSTEM_FONT;
     dc->selected_brush = &STUB_STOCK_WHITE_BRUSH;
     dc->selected_pen = &STUB_STOCK_BLACK_PEN;
     dc->selected_palette = &STUB_STOCK_DEFAULT_PALETTE;
+    dc->selected_bitmap = NULL;
     return dc;
 }
 

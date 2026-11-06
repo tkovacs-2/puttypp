@@ -81,8 +81,9 @@ WINUSERAPI HANDLE WINAPI LoadImage(HINSTANCE inst, LPCSTR name, UINT type, int c
         } else {
             for (int i = 0; i < resource_icon_count; i++) {
                 if (resource_icons[i].name == name) {
-                    StubIcon *icon = calloc(1, sizeof(*icon));
+                    StubIcon *icon = malloc(sizeof(*icon));
                     icon->name = resource_icons[i].name;
+                    icon->shared = false;
                     return (HICON)icon;
                 }
             }

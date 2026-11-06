@@ -281,6 +281,12 @@ void pane_clear_active_session(Pane *pane) {
     pane->active_session = NULL;
 }
 
+void pane_restore_active_session(Pane *pane) {
+    int index = tab_bar_get_active_tab(&pane->tabbar);
+    assert(index >= 0);
+    pane->active_session = (WinGuiSession *)pointer_array_get(&pane->tabbar_data, index);
+}
+
 HDWP pane_pin_window(Pane *pane, HDWP hdwp) {
     return finddlg_pin_window(&pane->finddlg, hdwp);
 }

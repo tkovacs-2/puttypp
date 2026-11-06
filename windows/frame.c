@@ -555,7 +555,6 @@ static LRESULT CALLBACK frame_proc(HWND hwnd, UINT message, WPARAM wparam, LPARA
         destroy_sessions(root_split);
         split_destroy(root_split);
         find_match_mask_free(&find_match_mask);
-        DeleteObject(menu_font);
         PostQuitMessage(0);
         return 0;
       case WM_SIZE: {
@@ -1437,8 +1436,10 @@ void reconfig_term_dimensions(WinGuiSession *wgs, Conf *prev_conf) {
         return;
     }
     wgs->offset_width = wgs->offset_height = conf_get_int(wgs->conf, CONF_window_border);
-    set_term_hwnd_style(wgs->pane, wgs);
     if (wgs->pane == split_get_pane(root_split) && !is_zoomed && !is_fullscr) {
+        pane_clear_active_session(wgs->pane);
+        set_term_hwnd_style(wgs->pane, wgs);
+        pane_restore_active_session(wgs->pane);
         if (font_changed) {
             deinit_fonts(wgs);
             init_term_font(wgs);
@@ -1448,6 +1449,7 @@ void reconfig_term_dimensions(WinGuiSession *wgs, Conf *prev_conf) {
         }
         snap_frame_to_term(wgs->pane);
     } else {
+        set_term_hwnd_style(wgs->pane, wgs);
         int resize_action = conf_get_int(wgs->conf, CONF_resize_action);
         bool font_resize = (resize_action == RESIZE_FONT ||
                             (resize_action == RESIZE_EITHER && wgs->pane == split_get_pane(root_split) && (is_zoomed || is_fullscr)));
